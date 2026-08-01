@@ -1,5 +1,9 @@
 # 轮式移动双臂机器人协同稳载仿真系统
 
+<p align="center">
+  <img src="images/image.png" alt="双臂协同稳载初始夹持姿态" width="720"/>
+</p>
+
 ## 项目全称
 
 **轮式移动双臂机器人协同稳载仿真系统（双任务：水平搬水 + 板面小球驻留控制）**
@@ -49,6 +53,8 @@ pip install mujoco numpy scipy
 ```
 BalanceDual-Arm/
 ├── README.md                                          # 本文档
+├── images/
+│   └── image.png                                      # 初始夹持姿态示意图
 ├── scene_dual_arm_plate.xml                           # 完整 MJCF 场景文件
 ├── dual_arm_controller.py                             # 双臂协同稳载控制主程序
 ├── KITT1_5V3robot_dual_dahuan_urdf/
@@ -268,6 +274,77 @@ w_plate_desired[2] = 0.0
 |------|------|
 | **初期** | 全部使用原生几何体（box、sphere、cylinder）快速搭建，保证算法先跑通 |
 | **后期** | 代码结构预留接口，可替换为 Menagerie/YCB 开源高精度 MJCF 模型 |
+
+### 7.4 `keyframe` 中 `qpos` 与关节对应关系
+
+`scene_dual_arm_plate.xml` 的 `<keyframe>` 共 **60 维**（`nq=60`），按 MuJoCo 关节在 XML 中的出现顺序排列。自由关节（`freejoint`）占 7 维：`[x, y, z, qw, qx, qy, qz]`；铰链/滑动关节各占 1 维。
+
+当前 keyframe 内容与索引对照如下：
+
+```xml
+<key name="initial" qpos="
+    0.35   0.00  0.980  0.707107 0 0 0.707107   <!-- qpos[ 0: 7]  平板 plate_freejoint -->
+    0.39   0.06  1.040  1 0 0 0                 <!-- qpos[ 7:14]  水杯 cup_freejoint -->
+    0.39   0.06  1.065  1 0 0 0                 <!-- qpos[14:21]  水体 water_freejoint -->
+    0.31  -0.06  1.010  1 0 0 0                 <!-- qpos[21:28]  小球 ball_freejoint -->
+    0 0 0 0 0 0 0 0                             <!-- qpos[28:36]  腿部 8 铰链 -->
+    0 0 0 0                                     <!-- qpos[36:40]  躯干 4 铰链 -->
+    0 0 0 0 0 0 0                               <!-- qpos[40:47]  左臂 7 铰链 -->
+    0 0                                         <!-- qpos[47:49]  左手指 2 滑动 -->
+    0 0 0 0 0 0 0                               <!-- qpos[49:56]  右臂 7 铰链 -->
+    0 0                                         <!-- qpos[56:58]  右手指 2 滑动 -->
+    0 0                                         <!-- qpos[58:60]  头部 2 铰链 -->
+"/>
+```
+
+| qpos 索引 | 维数 | 关节名称 | 类型 | keyframe 当前值 | 含义 |
+|:---------:|:----:|----------|------|-----------------|------|
+| `0:3` | 3 | `plate_freejoint` | free 位置 | `0.35, 0.00, 0.980` | 平板中心 xyz (m) |
+| `3:7` | 4 | `plate_freejoint` | free 四元数 | `0.707107, 0, 0, 0.707107` | 绕 Z 轴 +90°（长边沿 Y） |
+| `7:10` | 3 | `cup_freejoint` | free 位置 | `0.39, 0.06, 1.040` | 水杯 xyz |
+| `10:14` | 4 | `cup_freejoint` | free 四元数 | `1, 0, 0, 0` | 无旋转 |
+| `14:17` | 3 | `water_freejoint` | free 位置 | `0.39, 0.06, 1.065` | 水体 xyz |
+| `17:21` | 4 | `water_freejoint` | free 四元数 | `1, 0, 0, 0` | 无旋转 |
+| `21:24` | 3 | `ball_freejoint` | free 位置 | `0.31, -0.06, 1.010` | 小球 xyz |
+| `24:28` | 4 | `ball_freejoint` | free 四元数 | `1, 0, 0, 0` | 无旋转 |
+| `28` | 1 | `ZQ` | hinge | `0` | 左前腿髋 |
+| `29` | 1 | `ZQL` | hinge | `0` | 左前腿膝 |
+| `30` | 1 | `YQ` | hinge | `0` | 右前腿髋 |
+| `31` | 1 | `YQL` | hinge | `0` | 右前腿膝 |
+| `32` | 1 | `ZH` | hinge | `0` | 左后腿髋 |
+| `33` | 1 | `ZHL` | hinge | `0` | 左后腿膝 |
+| `34` | 1 | `YH` | hinge | `0` | 右后腿髋 |
+| `35` | 1 | `YHL` | hinge | `0` | 右后腿膝 |
+| `36` | 1 | `trunk_joint_1` | hinge | `0` | 躯干俯仰 1 |
+| `37` | 1 | `trunk_joint_2` | hinge | `0` | 躯干俯仰 2 |
+| `38` | 1 | `trunk_joint_3` | hinge | `0` | 躯干俯仰 3 |
+| `39` | 1 | `trunk_joint_4` | hinge | `0` | 躯干偏航 |
+| `40` | 1 | `left_arm_joint_1` | hinge | `0` | 左臂关节 1 |
+| `41` | 1 | `left_arm_joint_2` | hinge | `0` | 左臂关节 2 |
+| `42` | 1 | `left_arm_joint_3` | hinge | `0` | 左臂关节 3 |
+| `43` | 1 | `left_arm_joint_4` | hinge | `0` | 左臂关节 4 |
+| `44` | 1 | `left_arm_joint_5` | hinge | `0` | 左臂关节 5 |
+| `45` | 1 | `left_arm_joint_6` | hinge | `0` | 左臂关节 6 |
+| `46` | 1 | `left_arm_joint_7` | hinge | `0` | 左臂关节 7 |
+| `47` | 1 | `leftfinger1_joint` | slide | `0` | 左手指 1（有执行器） |
+| `48` | 1 | `leftfinger2_joint` | slide | `0` | 左手指 2（equality 镜像） |
+| `49` | 1 | `right_arm_joint_1` | hinge | `0` | 右臂关节 1 |
+| `50` | 1 | `right_arm_joint_2` | hinge | `0` | 右臂关节 2 |
+| `51` | 1 | `right_arm_joint_3` | hinge | `0` | 右臂关节 3 |
+| `52` | 1 | `right_arm_joint_4` | hinge | `0` | 右臂关节 4 |
+| `53` | 1 | `right_arm_joint_5` | hinge | `0` | 右臂关节 5 |
+| `54` | 1 | `right_arm_joint_6` | hinge | `0` | 右臂关节 6 |
+| `55` | 1 | `right_arm_joint_7` | hinge | `0` | 右臂关节 7 |
+| `56` | 1 | `rightfinger1_joint` | slide | `0` | 右手指 1（有执行器） |
+| `57` | 1 | `rightfinger2_joint` | slide | `0` | 右手指 2（equality 镜像） |
+| `58` | 1 | `head_joint_1` | hinge | `0` | 头部偏航 |
+| `59` | 1 | `head_joint_2` | hinge | `0` | 头部俯仰 |
+
+说明：
+
+1. **实际仿真初始双臂姿态**由 `dual_arm_controller.py` 的 `load()` 通过 6D IK 写入 `qpos[40:47]` / `qpos[49:56]` 与 `ctrl[]`，不一定等于上表 keyframe 中的全零手臂角。
+2. free 关节四元数顺序为 MuJoCo 约定的 **`(w, x, y, z)`**。
+3. 手指 2 通过 equality 约束与手指 1 联动：`finger2 = -finger1`，一般只需控制 `*finger1_joint`。
 
 ---
 
