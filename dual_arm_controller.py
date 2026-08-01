@@ -15,21 +15,23 @@
   第2层：速度旋量坐标变换 (plate → left/right TCP)
   第3层：雅可比伪逆解算 (dq = J⁺ * twist)
   第4层：数值积分 + 限位 (q_target = q + dq*dt)
-  第5层：position 执行器驱动 (ctrl[] = q_target)
+  第5层：重力补偿 + PD 力矩
+         τ = g(q) + Kp·(q_des−q) + Kd·(dq_des−dq)  → data.ctrl
 
 仿真规则：
-  - 全部关节使用 position 位置型执行器
-  - 禁止直接写 qpos 赋值控制机器人
+  - 全部关节使用 motor 力矩型执行器
+  - 禁止直接写 qpos 赋值控制机器人（仅初始化允许）
   - 禁止纯速度开环控制
-  - 速度积分转位置，MuJoCo PID 闭环跟踪
+  - 重力 g(q)：mj_forward(q, dq=0) 后读 qfrc_bias（同 anyverse WBC 验证）
+  - 默认 --hold：锁定初始关节角保持，先验证动力学稳定
 
 依赖：
   pip install mujoco numpy scipy
 
 运行：
-  python dual_arm_controller.py              # 无GUI模式
-  python dual_arm_controller.py --gui        # 带GUI可视化
-  python dual_arm_controller.py --gui --step # 逐步调试模式
+  python dual_arm_controller.py --duration 20   # hold 初始姿态 20s（默认）
+  python dual_arm_controller.py --gui          # 带GUI可视化
+  python dual_arm_controller.py --balance      # 启用稳水平任务
 
 版本：v1.0
 日期：2026-07-31
@@ -89,7 +91,25 @@ class DualArmPlateController:
         self.kp_ball = args.kp_ball             # 小球驻留增益
         self.dls_lambda = 0.05                  # 阻尼最小二乘阻尼因子
         self.enable_ball = not args.no_ball     # 是否启球小球驻留
-        self.finger_grip = 0.015                # 手指夹紧位置 (0=张开, 0.023=全闭)
+        self.hold_mode = not getattr(args, 'balance', False)  # 默认 hold
+        self.finger_grip = 0.010                # 手指夹紧位置 (m)
+
+        # 力矩 PD 增益（参考 anyverse gravity_pd）
+        # τ = g(q) + Kp·e + Kd·ė
+        self.kp_arm = np.array([80.0, 80.0, 60.0, 60.0, 30.0, 30.0, 25.0])
+        self.kd_arm = np.array([10.0, 10.0,  8.0,  8.0,  3.0,  3.0,  2.5])
+        self.ki_arm = np.zeros(7)
+        self.i_err_left = np.zeros(7)
+        self.i_err_right = np.zeros(7)
+        self.i_err_limit = 0.2
+        self.kp_leg = 150.0
+        self.kd_leg = 20.0
+        self.kp_trunk = 200.0
+        self.kd_trunk = 25.0
+        self.kp_head = 40.0
+        self.kd_head = 4.0
+        self.kp_finger = 50.0
+        self.kd_finger = 3.0
 
         # ---- 运动学 ID 映射 ----
         self._init_kinematics()
@@ -99,6 +119,16 @@ class DualArmPlateController:
         self.plate_desired_pos = np.array([0.35, 0.0, 0.98])  # 平板期望位置
         self.prev_dq_left = np.zeros(7)   # 上一帧左臂关节速度
         self.prev_dq_right = np.zeros(7)  # 上一帧右臂关节速度
+        # 全部执行器保持目标（初始化后锁定）
+        self.hold_q_targets = {}
+        self.q_des_left = np.zeros(7)
+        self.q_des_right = np.zeros(7)
+        self.q_init_left = np.zeros(7)
+        self.q_init_right = np.zeros(7)
+
+        # 场景浮体初始位姿（HOLD 时钉住可视化）
+        self.scene_free_qpos = {}  # name -> (qadr, qpos7)
+        self.plate_hold_yaw = np.pi / 2  # 长边正对机器人（Rz90）
 
         # ---- 日志 ----
         self.log_interval = max(1, int(0.5 / self.dt))  # 每 0.5 秒打印一次
@@ -121,6 +151,15 @@ class DualArmPlateController:
         self.left_act_ids = LEFT_ARM_ACT_IDS
         self.right_act_ids = RIGHT_ARM_ACT_IDS
 
+        # 执行器 → 关节 DOF 地址（motor gear=1 时 ctrl 对应关节力矩）
+        self.act_dofadr = np.zeros(model.nu, dtype=int)
+        self.act_jnt_ids = np.zeros(model.nu, dtype=int)
+        for a in range(model.nu):
+            # 传动链第一个关节
+            jnt_id = model.actuator_trnid[a, 0]
+            self.act_jnt_ids[a] = jnt_id
+            self.act_dofadr[a] = model.jnt_dofadr[jnt_id]
+
         # 刚体 ID
         self.tcp_left_id  = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "Joint7_L")
         self.tcp_right_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "Joint7_R")
@@ -135,10 +174,11 @@ class DualArmPlateController:
         self.left_joint_ranges  = np.array([model.jnt_range[j][:] for j in self.left_joint_ids])
         self.right_joint_ranges = np.array([model.jnt_range[j][:] for j in self.right_joint_ids])
 
-        print(f"[Init] 左臂关节 DOF: {self.left_joint_ids}")
-        print(f"[Init] 右臂关节 DOF: {self.right_joint_ids}")
+        print(f"[Init] 左臂关节 ID: {self.left_joint_ids}")
+        print(f"[Init] 右臂关节 ID: {self.right_joint_ids}")
         print(f"[Init] 左臂执行器 ID: {self.left_act_ids}")
         print(f"[Init] 右臂执行器 ID: {self.right_act_ids}")
+        print(f"[Init] 执行器模式: motor 力矩控制 (τ = g(q) + PD)")
 
     # ==================================================================
     # 第0层：读取状态
@@ -178,6 +218,11 @@ class DualArmPlateController:
         """读取当前关节位置 qpos"""
         ids = self.left_joint_ids if side == 'left' else self.right_joint_ids
         return np.array([self.data.qpos[self.model.jnt_qposadr[j]] for j in ids])
+
+    def get_current_joint_velocities(self, side='left'):
+        """读取当前关节速度 qvel"""
+        ids = self.left_joint_ids if side == 'left' else self.right_joint_ids
+        return np.array([self.data.qvel[self.model.jnt_dofadr[j]] for j in ids])
 
     # ==================================================================
     # 第1层：底盘姿态补偿
@@ -368,42 +413,190 @@ class DualArmPlateController:
         return q_target
 
     # ==================================================================
-    # 第5层：写入执行器
+    # 第5层：重力补偿 + PD → data.ctrl
+    # 参考 anyverse mujoco_wbc_validation / gravity_pd_controller：
+    #   τ = g(q) + Kp·(q_des−q) + Kd·(dq_des−dq)
+    #   g(q) = qfrc_bias |_{dq=0}  （mj_forward 后读取）
     # ==================================================================
 
-    def write_arm_actuators(self, q_target_left, q_target_right):
+    def compute_gravity_torques(self):
         """
-        将目标关节位置写入 position 执行器的 ctrl 数组
+        用 MuJoCo 求纯重力力矩 g(q)。
 
-        MuJoCo position 执行器内部：
-          τ = kp * (ctrl - qpos) + kd * (0 - qvel)
-
-        Args:
-            q_target_left:  左臂 7 维目标位置
-            q_target_right: 右臂 7 维目标位置
+        临时将 qvel 置零后 mj_forward，此时 qfrc_bias = g(q)；
+        再恢复原状态并重新 forward，避免污染仿真。
         """
+        model, data = self.model, self.data
+        qpos_save = data.qpos.copy()
+        qvel_save = data.qvel.copy()
+
+        data.qvel[:] = 0.0
+        mujoco.mj_forward(model, data)
+        g = data.qfrc_bias.copy()
+
+        data.qpos[:] = qpos_save
+        data.qvel[:] = qvel_save
+        mujoco.mj_forward(model, data)
+        return g
+
+    def _hold_kp_kd(self, act_id):
+        """按执行器分组返回 (Kp, Kd)"""
+        if ACT_LEGS_START <= act_id < ACT_TRUNK_START:
+            return self.kp_leg, self.kd_leg
+        if ACT_TRUNK_START <= act_id < ACT_LEFT_ARM_START:
+            return self.kp_trunk, self.kd_trunk
+        if act_id >= ACT_HEAD_START:
+            return self.kp_head, self.kd_head
+        if act_id in (ACT_LEFT_FINGER, ACT_RIGHT_FINGER):
+            return self.kp_finger, self.kd_finger
+        return self.kp_leg, self.kd_leg
+
+    def write_torque_ctrl(self, q_des_left, dq_des_left, q_des_right, dq_des_right):
+        """
+        计算力矩并写入 motor 执行器 ctrl：
+
+          τ = g(q) + Kp·e + Kd·ė
+          data.ctrl = clip(τ)
+        """
+        model, data = self.model, self.data
+
+        q_cur_l = self.get_current_joint_positions('left')
+        q_cur_r = self.get_current_joint_positions('right')
+        dq_cur_l = self.get_current_joint_velocities('left')
+        dq_cur_r = self.get_current_joint_velocities('right')
+
+        g = self.compute_gravity_torques()
+
+        def set_ctrl(act_id, tau):
+            lo, hi = model.actuator_ctrlrange[act_id]
+            data.ctrl[act_id] = float(np.clip(tau, lo, hi))
+
+        # 积分项：消除接触/weld 外力引起的稳态偏差（仅 hold 或始终启用）
+        self.i_err_left += (q_des_left - q_cur_l) * self.dt
+        self.i_err_right += (q_des_right - q_cur_r) * self.dt
+        self.i_err_left = np.clip(self.i_err_left, -self.i_err_limit, self.i_err_limit)
+        self.i_err_right = np.clip(self.i_err_right, -self.i_err_limit, self.i_err_limit)
+
         for i, act_id in enumerate(self.left_act_ids):
-            self.data.ctrl[act_id] = q_target_left[i]
-        for i, act_id in enumerate(self.right_act_ids):
-            self.data.ctrl[act_id] = q_target_right[i]
+            dof = int(self.act_dofadr[act_id])
+            e = q_des_left[i] - q_cur_l[i]
+            de = dq_des_left[i] - dq_cur_l[i]
+            tau = (g[dof] + self.kp_arm[i] * e + self.kd_arm[i] * de
+                   + self.ki_arm[i] * self.i_err_left[i])
+            set_ctrl(act_id, tau)
 
-    def write_static_joints(self):
+        for i, act_id in enumerate(self.right_act_ids):
+            dof = int(self.act_dofadr[act_id])
+            e = q_des_right[i] - q_cur_r[i]
+            de = dq_des_right[i] - dq_cur_r[i]
+            tau = (g[dof] + self.kp_arm[i] * e + self.kd_arm[i] * de
+                   + self.ki_arm[i] * self.i_err_right[i])
+            set_ctrl(act_id, tau)
+
+        for act_id in list(range(ACT_LEGS_START, ACT_LEFT_ARM_START)) + \
+                      list(range(ACT_HEAD_START, model.nu)):
+            dof = int(self.act_dofadr[act_id])
+            jid = int(self.act_jnt_ids[act_id])
+            qadr = model.jnt_qposadr[jid]
+            q_des = self.hold_q_targets.get(act_id, 0.0)
+            e = q_des - data.qpos[qadr]
+            de = 0.0 - data.qvel[dof]
+            kp, kd = self._hold_kp_kd(act_id)
+            set_ctrl(act_id, g[dof] + kp * e + kd * de)
+
+        for act_id in (ACT_LEFT_FINGER, ACT_RIGHT_FINGER):
+            dof = int(self.act_dofadr[act_id])
+            jid = int(self.act_jnt_ids[act_id])
+            qadr = model.jnt_qposadr[jid]
+            e = self.finger_grip - data.qpos[qadr]
+            de = 0.0 - data.qvel[dof]
+            set_ctrl(act_id, g[dof] + self.kp_finger * e + self.kd_finger * de)
+
+    def lock_hold_targets(self):
+        """初始化完成后，锁定全部关节当前角度作为保持目标"""
+        for act_id in list(range(ACT_LEGS_START, ACT_LEFT_ARM_START)) + \
+                      list(range(ACT_HEAD_START, self.model.nu)):
+            jid = int(self.act_jnt_ids[act_id])
+            qadr = self.model.jnt_qposadr[jid]
+            self.hold_q_targets[act_id] = float(self.data.qpos[qadr])
+
+        self.q_des_left = self.get_current_joint_positions('left').copy()
+        self.q_des_right = self.get_current_joint_positions('right').copy()
+        self.q_init_left = self.q_des_left.copy()
+        self.q_init_right = self.q_des_right.copy()
+        print(f"[Hold] 锁定初始姿态 "
+              f"左臂={np.round(self.q_des_left, 3)}  "
+              f"右臂={np.round(self.q_des_right, 3)}")
+
+        if self.hold_mode:
+            self._prepare_hold_scene()
+
+    def _prepare_hold_scene(self):
         """
-        将非控制关节（腿、躯干、头）保持在零位，手指保持夹紧
-        避免这些关节自由漂移
+        HOLD 场景准备：
+          - 关闭接触（初始姿态网格自穿透会产生极大接触力）
+          - 保留平板 mocap-weld，保持 Rz90° 可视化
+          - 杯/水/球钉在初始位姿（无接触时否则会掉落）
         """
-        # 腿部 8 关节归零
-        for act_id in range(ACT_LEGS_START, ACT_TRUNK_START):
-            self.data.ctrl[act_id] = 0.0
-        # 躯干 4 关节归零
-        for act_id in range(ACT_TRUNK_START, ACT_LEFT_ARM_START):
-            self.data.ctrl[act_id] = 0.0
-        # 手指保持夹紧（不归零，使用设定值）
-        self.data.ctrl[ACT_LEFT_FINGER] = self.finger_grip
-        self.data.ctrl[ACT_RIGHT_FINGER] = self.finger_grip
-        # 头部归零
-        for act_id in range(ACT_HEAD_START, self.model.nu):
-            self.data.ctrl[act_id] = 0.0
+        model, data = self.model, self.data
+
+        # 仅关接触，保留 equality（平板 weld + 手指镜像）
+        model.opt.disableflags |= mujoco.mjtDisableBit.mjDSBL_CONTACT
+
+        # 记录并钉住场景浮体当前位姿（load 已摆好 Rz90 板 + 杯/球）
+        self.scene_free_qpos = {}
+        for name in ("plate", "cup", "water_mass", "ball"):
+            bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+            if bid < 0:
+                continue
+            jid = model.body_jntadr[bid]
+            qadr = int(model.jnt_qposadr[jid])
+            self.scene_free_qpos[name] = (qadr, data.qpos[qadr:qadr + 7].copy())
+
+        # mocap 对齐到期望位姿，yaw 固定 90°
+        self.plate_hold_yaw = np.pi / 2
+        self._set_plate_mocap_yaw(self.plate_hold_yaw)
+        # 同步物理板姿态到 mocap（weld 收敛前先对齐，避免“转回去”）
+        if "plate" in self.scene_free_qpos:
+            qadr, q7 = self.scene_free_qpos["plate"]
+            q7 = q7.copy()
+            q7[:3] = self.plate_desired_pos
+            s2 = np.sin(self.plate_hold_yaw / 2.0)
+            c2 = np.cos(self.plate_hold_yaw / 2.0)
+            q7[3:] = [c2, 0.0, 0.0, s2]  # wxyz, Rz(yaw)
+            data.qpos[qadr:qadr + 7] = q7
+            self.scene_free_qpos["plate"] = (qadr, q7.copy())
+
+        self.finger_grip = 0.010
+        for fname, val in (('leftfinger1_joint', 0.010), ('leftfinger2_joint', -0.010),
+                           ('rightfinger1_joint', 0.010), ('rightfinger2_joint', -0.010)):
+            jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, fname)
+            if jid >= 0:
+                data.qpos[model.jnt_qposadr[jid]] = val
+
+        mujoco.mj_forward(model, data)
+        print("[Hold] 已禁用接触；板/杯/球保留在初始位姿（板 Rz90°）")
+
+    def _set_plate_mocap_yaw(self, yaw):
+        """设置平板 mocap 位姿：水平 + 指定 yaw"""
+        cy, sy = np.cos(yaw), np.sin(yaw)
+        # Rz(yaw) → quat wxyz
+        self.data.mocap_pos[self.mocap_idx] = self.plate_desired_pos
+        self.data.mocap_quat[self.mocap_idx] = np.array([
+            np.cos(yaw / 2.0), 0.0, 0.0, np.sin(yaw / 2.0)
+        ])
+
+    def _pin_scene_objects(self):
+        """每步钉住杯/水/球（无接触时防坠落）；板由 mocap weld 驱动"""
+        data = self.data
+        for name, (qadr, q7) in self.scene_free_qpos.items():
+            if name == "plate":
+                continue  # 板跟 mocap
+            data.qpos[qadr:qadr + 7] = q7
+            # 清速度
+            bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
+            dadr = self.model.jnt_dofadr[self.model.body_jntadr[bid]]
+            data.qvel[dadr:dadr + 6] = 0.0
 
     # ==================================================================
     # 平板 Mocap 更新
@@ -473,6 +666,27 @@ class DualArmPlateController:
     def control_step(self):
         """每步仿真调用一次，执行完整的 5 层控制链路"""
 
+        # === Hold 模式：锁定初始关节角，仅重力补偿 + PD ===
+        if self.hold_mode:
+            self._set_plate_mocap_yaw(self.plate_hold_yaw)
+            self._pin_scene_objects()
+            self.write_torque_ctrl(
+                self.q_des_left, np.zeros(7),
+                self.q_des_right, np.zeros(7))
+
+            self.step_count += 1
+            if self.step_count % self.log_interval == 0:
+                roll, pitch = self.get_chassis_orientation()
+                q_l = self.get_current_joint_positions('left')
+                q_r = self.get_current_joint_positions('right')
+                err_l = np.linalg.norm(q_l - self.q_init_left)
+                err_r = np.linalg.norm(q_r - self.q_init_right)
+                print(f"[HOLD t={self.data.time:5.2f}s] "
+                      f"roll={np.degrees(roll):+5.2f}° "
+                      f"pitch={np.degrees(pitch):+5.2f}° "
+                      f"| ‖Δq_L‖={err_l:.4f} ‖Δq_R‖={err_r:.4f}")
+            return
+
         # === 第1层：姿态补偿 ===
         w_comp, roll, pitch = self.compute_attitude_compensation()
 
@@ -520,9 +734,8 @@ class DualArmPlateController:
         q_target_left  = self.integrate_and_clamp(dq_left,  q_cur_left,  self.left_joint_ranges)
         q_target_right = self.integrate_and_clamp(dq_right, q_cur_right, self.right_joint_ranges)
 
-        # === 第5层：写入执行器 ===
-        self.write_arm_actuators(q_target_left, q_target_right)
-        self.write_static_joints()
+        # === 第5层：重力补偿 + PD 力矩 → data.ctrl ===
+        self.write_torque_ctrl(q_target_left, dq_left, q_target_right, dq_right)
 
         # === 更新平板 mocap 位姿 ===
         self.update_plate_mocap()
@@ -664,12 +877,14 @@ class SimulationRunner:
         set_free_body_qpos("water_mass", (plate_center_x + 0.04, 0.06, plate_surface_z + 0.085))
         set_free_body_qpos("ball", (plate_center_x - 0.04, -0.06, plate_surface_z + 0.03))
 
-        for i, act_id in enumerate(range(12, 19)):
-            self.data.ctrl[act_id] = q_left_init[i]
-        for i, act_id in enumerate(range(20, 27)):
-            self.data.ctrl[act_id] = q_right_init[i]
-        self.data.ctrl[ACT_LEFT_FINGER] = 0.010
-        self.data.ctrl[ACT_RIGHT_FINGER] = 0.010
+        # 手指初始开合写到 qpos（motor 控制力矩，初始化用状态）
+        for fname, val in (('leftfinger1_joint', 0.010), ('leftfinger2_joint', -0.010),
+                           ('rightfinger1_joint', 0.010), ('rightfinger2_joint', -0.010)):
+            jid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_JOINT, fname)
+            self.data.qpos[self.model.jnt_qposadr[jid]] = val
+
+        # motor 执行器：ctrl 为力矩，初始化为 0，首帧 control_step 再写入
+        self.data.ctrl[:] = 0.0
 
         mujoco.mj_forward(self.model, self.data)
 
@@ -679,11 +894,18 @@ class SimulationRunner:
             self.model, mujoco.mjtObj.mjOBJ_BODY, 'plate')]
         print(f"  平板初始位置: ({p_pos[0]:.3f}, {p_pos[1]:.3f}, {p_pos[2]:.3f})")
         print(f"  夹持模式: 左右短边水平外侧夹持（防穿模）")
+        print(f"  执行器: motor 力矩控制 (τ = g(q) + PD)")
+        mode = "HOLD 初始姿态" if not self.args.balance else "BALANCE 稳水平"
+        print(f"  控制模式: {mode}")
 
         self.controller = DualArmPlateController(self.model, self.data, self.args)
         self.controller.plate_desired_pos = np.array(
             [plate_center_x, plate_center_y, plate_surface_z])
         self.controller.finger_grip = 0.010
+        self.controller.lock_hold_targets()
+        # 首帧写入平衡力矩，避免 mj_step 前零力矩导致塌陷
+        self.controller.write_torque_ctrl(
+            q_left_init, np.zeros(7), q_right_init, np.zeros(7))
 
     def step(self):
         """执行单步仿真"""
@@ -692,20 +914,46 @@ class SimulationRunner:
 
     def run_headless(self):
         """无 GUI 模式运行"""
-        print(f"[Run] 无GUI模式，仿真时长 {self.args.duration}s")
+        mode = "HOLD" if self.controller.hold_mode else "BALANCE"
+        print(f"[Run] 无GUI模式 [{mode}]，仿真时长 {self.args.duration}s")
         total_steps = int(self.args.duration / self.model.opt.timestep)
+
+        # 稳定性统计
+        max_err_l = 0.0
+        max_err_r = 0.0
+        max_pitch = 0.0
 
         t_start = time.time()
         for step in range(total_steps):
             self.step()
+            if step % 100 == 0:
+                q_l = self.controller.get_current_joint_positions('left')
+                q_r = self.controller.get_current_joint_positions('right')
+                err_l = float(np.linalg.norm(q_l - self.controller.q_init_left))
+                err_r = float(np.linalg.norm(q_r - self.controller.q_init_right))
+                _, pitch = self.controller.get_chassis_orientation()
+                max_err_l = max(max_err_l, err_l)
+                max_err_r = max(max_err_r, err_r)
+                max_pitch = max(max_pitch, abs(float(pitch)))
+
             if step % 500 == 0:
                 elapsed = time.time() - t_start
                 progress = 100.0 * step / total_steps
-                print(f"[Progress] {progress:5.1f}%  elapsed={elapsed:.1f}s")
+                print(f"[Progress] {progress:5.1f}%  elapsed={elapsed:.1f}s  "
+                      f"‖Δq_L‖={err_l:.4f} ‖Δq_R‖={err_r:.4f} "
+                      f"|pitch|={np.degrees(abs(pitch)):.2f}°")
 
         elapsed = time.time() - t_start
         print(f"[Done] 仿真完成，实际用时 {elapsed:.1f}s，"
               f"RTF = {self.args.duration / elapsed:.2f}")
+        print(f"[Stability] max‖Δq_L‖={max_err_l:.4f}  max‖Δq_R‖={max_err_r:.4f}  "
+              f"max|pitch|={np.degrees(max_pitch):.2f}°")
+
+        # 终态
+        self._print_state()
+        ok = (max_err_l < 0.05 and max_err_r < 0.05 and max_pitch < np.radians(3.0))
+        print(f"[Verdict] {'PASS 初始姿态保持稳定' if ok else 'FAIL 漂移过大，需调增益'}")
+        return ok
 
     def run_gui(self):
         """带 GUI 可视化模式运行"""
@@ -897,20 +1145,21 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python dual_arm_controller.py                          # 无GUI模式运行30秒
-  python dual_arm_controller.py --gui                    # GUI可视化模式
-  python dual_arm_controller.py --gui --step             # 逐步调试模式
-  python dual_arm_controller.py --gui --no-ball          # 仅验证姿态补偿
-  python dual_arm_controller.py --kp-attitude 10.0       # 高增益快速收敛
-  python dual_arm_controller.py --gui --duration 60      # 长时间运行
+  python dual_arm_controller.py --duration 20            # HOLD 初始姿态 20s（默认）
+  python dual_arm_controller.py --gui                    # GUI 可视化 HOLD
+  python dual_arm_controller.py --balance --gui          # 启用稳水平任务
+  python dual_arm_controller.py --gui --step             # 逐步调试
+  python dual_arm_controller.py --balance --no-ball      # 仅姿态补偿
         """)
 
     parser.add_argument('--gui', action='store_true',
                         help='启用 MuJoCo 可视化渲染')
     parser.add_argument('--step', action='store_true',
                         help='逐步仿真模式（按 Enter 前进）')
-    parser.add_argument('--duration', type=float, default=30.0,
-                        help='仿真总时长（秒，无GUI模式）')
+    parser.add_argument('--duration', type=float, default=20.0,
+                        help='仿真总时长（秒，无GUI模式，默认20）')
+    parser.add_argument('--balance', action='store_true',
+                        help='启用稳水平/小球任务（默认关闭，仅 HOLD 初始姿态）')
     parser.add_argument('--kp-attitude', type=float, default=5.0,
                         help='姿态补偿比例增益')
     parser.add_argument('--kp-ball', type=float, default=2.0,
@@ -951,6 +1200,8 @@ def main():
     print(f"  MJCF:    {xml_path}")
     print(f"  GUI:     {args.gui}")
     print(f"  Step:    {args.step}")
+    print(f"  Mode:    {'BALANCE' if args.balance else 'HOLD'}")
+    print(f"  Duration:{args.duration}s")
     print(f"  Kp_att:  {args.kp_attitude}")
     print(f"  Kp_ball: {args.kp_ball}")
     print(f"  Ball:    {'启用' if not args.no_ball else '禁用'}")

@@ -16,8 +16,9 @@
     - 自由滚动小球
 
   执行器规则：
-    - 全部关节使用 position 位置型执行器
-    - 禁止直接写 qpos 赋值控制机器人
+    - 全部关节使用 motor 力矩型执行器
+    - 禁止直接写 qpos 赋值控制机器人（初始化除外）
+    - 控制通过 data.ctrl 写入力矩
 -->
 <mujoco model="dual_arm_plate_scene">
 
@@ -470,52 +471,53 @@
   </contact>
 
   <!-- ================================================================ -->
-  <!-- 执行器（全部 position 位置型） -->
+  <!-- 执行器（全部 motor 力矩型，ctrl 直接为关节力矩 τ） -->
+  <!-- gear=1 → data.ctrl[i] = 关节力矩 (N·m 或 N) -->
   <!-- ================================================================ -->
   <actuator>
     <!-- 腿部 (ACT 0-7) -->
-    <position name="ZQ_act"      joint="ZQ"   ctrlrange="-3.14 3.14"     kp="100"/>
-    <position name="ZQL_act"     joint="ZQL"  ctrlrange="-3.14 3.14"     kp="100"/>
-    <position name="YQ_act"      joint="YQ"   ctrlrange="-3.14 3.14"     kp="100"/>
-    <position name="YQL_act"     joint="YQL"  ctrlrange="-3.14 3.14"     kp="100"/>
-    <position name="ZH_act"      joint="ZH"   ctrlrange="-3.14 3.14"     kp="100"/>
-    <position name="ZHL_act"     joint="ZHL"  ctrlrange="-3.14 3.14"     kp="100"/>
-    <position name="YH_act"      joint="YH"   ctrlrange="-3.14 3.14"     kp="100"/>
-    <position name="YHL_act"     joint="YHL"  ctrlrange="-3.14 3.14"     kp="100"/>
+    <motor name="ZQ_act"      joint="ZQ"   gear="1" ctrlrange="-200 200"/>
+    <motor name="ZQL_act"     joint="ZQL"  gear="1" ctrlrange="-200 200"/>
+    <motor name="YQ_act"      joint="YQ"   gear="1" ctrlrange="-200 200"/>
+    <motor name="YQL_act"     joint="YQL"  gear="1" ctrlrange="-200 200"/>
+    <motor name="ZH_act"      joint="ZH"   gear="1" ctrlrange="-200 200"/>
+    <motor name="ZHL_act"     joint="ZHL"  gear="1" ctrlrange="-200 200"/>
+    <motor name="YH_act"      joint="YH"   gear="1" ctrlrange="-200 200"/>
+    <motor name="YHL_act"     joint="YHL"  gear="1" ctrlrange="-200 200"/>
 
     <!-- 躯干 (ACT 8-11) -->
-    <position name="t1_act" joint="trunk_joint_1" ctrlrange="-1.1781 0"       kp="200"/>
-    <position name="t2_act" joint="trunk_joint_2" ctrlrange="-2.5482 1.7453"  kp="200"/>
-    <position name="t3_act" joint="trunk_joint_3" ctrlrange="-1.5708 1.5708"  kp="80"/>
-    <position name="t4_act" joint="trunk_joint_4" ctrlrange="-3.1416 3.1416"  kp="50"/>
+    <motor name="t1_act" joint="trunk_joint_1" gear="1" ctrlrange="-411 411"/>
+    <motor name="t2_act" joint="trunk_joint_2" gear="1" ctrlrange="-411 411"/>
+    <motor name="t3_act" joint="trunk_joint_3" gear="1" ctrlrange="-411 411"/>
+    <motor name="t4_act" joint="trunk_joint_4" gear="1" ctrlrange="-102 102"/>
 
     <!-- 左臂 (ACT 12-18) ★ 控制目标 -->
-    <position name="LA1_act" joint="left_arm_joint_1"  ctrlrange="-3.1067 3.1067"  kp="50"/>
-    <position name="LA2_act" joint="left_arm_joint_2"  ctrlrange="-2.0944 2.0944"  kp="50"/>
-    <position name="LA3_act" joint="left_arm_joint_3"  ctrlrange="-3.1067 3.1067"  kp="50"/>
-    <position name="LA4_act" joint="left_arm_joint_4"  ctrlrange="-2.5307 1.0472"  kp="50"/>
-    <position name="LA5_act" joint="left_arm_joint_5"  ctrlrange="-3.1067 3.1067"  kp="30"/>
-    <position name="LA6_act" joint="left_arm_joint_6"  ctrlrange="-1.0472 1.0472"  kp="30"/>
-    <position name="LA7_act" joint="left_arm_joint_7"  ctrlrange="-1.5708 1.5708"  kp="20"/>
+    <motor name="LA1_act" joint="left_arm_joint_1"  gear="1" ctrlrange="-108 108"/>
+    <motor name="LA2_act" joint="left_arm_joint_2"  gear="1" ctrlrange="-108 108"/>
+    <motor name="LA3_act" joint="left_arm_joint_3"  gear="1" ctrlrange="-66 66"/>
+    <motor name="LA4_act" joint="left_arm_joint_4"  gear="1" ctrlrange="-66 66"/>
+    <motor name="LA5_act" joint="left_arm_joint_5"  gear="1" ctrlrange="-18 18"/>
+    <motor name="LA6_act" joint="left_arm_joint_6"  gear="1" ctrlrange="-18 18"/>
+    <motor name="LA7_act" joint="left_arm_joint_7"  gear="1" ctrlrange="-18 18"/>
 
     <!-- 左手指 (ACT 19) -->
-    <position name="LF1_act" joint="leftfinger1_joint"  ctrlrange="0 0.023" kp="20"/>
+    <motor name="LF1_act" joint="leftfinger1_joint"  gear="1" ctrlrange="-50 50"/>
 
     <!-- 右臂 (ACT 20-26) ★ 控制目标 -->
-    <position name="RA1_act" joint="right_arm_joint_1" ctrlrange="-3.1067 3.1067"  kp="50"/>
-    <position name="RA2_act" joint="right_arm_joint_2" ctrlrange="-2.0944 2.0944"  kp="50"/>
-    <position name="RA3_act" joint="right_arm_joint_3" ctrlrange="-3.1067 3.1067"  kp="50"/>
-    <position name="RA4_act" joint="right_arm_joint_4" ctrlrange="-2.5307 1.0472"  kp="50"/>
-    <position name="RA5_act" joint="right_arm_joint_5" ctrlrange="-3.1067 3.1067"  kp="30"/>
-    <position name="RA6_act" joint="right_arm_joint_6" ctrlrange="-1.0472 1.0472"  kp="30"/>
-    <position name="RA7_act" joint="right_arm_joint_7" ctrlrange="-1.5708 1.5708"  kp="20"/>
+    <motor name="RA1_act" joint="right_arm_joint_1" gear="1" ctrlrange="-108 108"/>
+    <motor name="RA2_act" joint="right_arm_joint_2" gear="1" ctrlrange="-108 108"/>
+    <motor name="RA3_act" joint="right_arm_joint_3" gear="1" ctrlrange="-66 66"/>
+    <motor name="RA4_act" joint="right_arm_joint_4" gear="1" ctrlrange="-66 66"/>
+    <motor name="RA5_act" joint="right_arm_joint_5" gear="1" ctrlrange="-18 18"/>
+    <motor name="RA6_act" joint="right_arm_joint_6" gear="1" ctrlrange="-18 18"/>
+    <motor name="RA7_act" joint="right_arm_joint_7" gear="1" ctrlrange="-18 18"/>
 
     <!-- 右手指 (ACT 27) -->
-    <position name="RF1_act" joint="rightfinger1_joint" ctrlrange="0 0.023" kp="20"/>
+    <motor name="RF1_act" joint="rightfinger1_joint" gear="1" ctrlrange="-50 50"/>
 
     <!-- 头部 (ACT 28-29) -->
-    <position name="H1_act" joint="head_joint_1"  ctrlrange="-1.5708 1.5708"  kp="30"/>
-    <position name="H2_act" joint="head_joint_2"  ctrlrange="-0.3491 0.6981"  kp="30"/>
+    <motor name="H1_act" joint="head_joint_1"  gear="1" ctrlrange="-6.6 6.6"/>
+    <motor name="H2_act" joint="head_joint_2"  gear="1" ctrlrange="-6.6 6.6"/>
   </actuator>
 
   <!-- ================================================================ -->
