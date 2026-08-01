@@ -1,0 +1,556 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  轮式移动双臂机器人协同稳载仿真场景
+  项目：BalanceDual-Arm
+  版本：v1.0 | 日期：2026-07-31
+
+  使用方式：
+    直接将 KITT1_5V3 机器人模型和场景物体合并在一个文件中，
+    避免 MuJoCo include 路径问题。
+
+  场景物体（全部原生几何体）：
+    - 地面（plane）
+    - 平板 mocap 驱动体 + 平板物理浮体（weld 约束连接）
+    - 水杯自由刚体
+    - 水体质量块（模拟水面重心偏移）
+    - 自由滚动小球
+
+  执行器规则：
+    - 全部关节使用 position 位置型执行器
+    - 禁止直接写 qpos 赋值控制机器人
+-->
+<mujoco model="dual_arm_plate_scene">
+
+  <compiler angle="radian"/>
+
+  <!-- ================================================================ -->
+  <!-- 仿真选项 -->
+  <!-- ================================================================ -->
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicitfast">
+    <flag contact="enable" gravity="enable" energy="enable"/>
+  </option>
+
+  <visual>
+    <global offwidth="1920" offheight="1080" azimuth="135" elevation="-20"/>
+  </visual>
+
+  <default>
+    <geom solref="0.02 1" solimp="0.9 0.95 0.001"/>
+    <default class="env">
+      <geom contype="0" conaffinity="0" group="3"/>
+    </default>
+    <default class="collision">
+      <geom group="2"/>
+    </default>
+  </default>
+
+  <!-- ================================================================ -->
+  <!-- 网格资源（机器人 + 可选高精度模型） -->
+  <!-- ================================================================ -->
+  <asset>
+    <!-- ===== 机器人 STL 网格（58个） ===== -->
+    <mesh name="YD_link"       content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/YD_link.STL"/>
+    <mesh name="ZQ_Link"       content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/ZQ_Link.STL"/>
+    <mesh name="ZQL_Link"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/ZQL_Link.STL"/>
+    <mesh name="YQ_Link"       content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/YQ_Link.STL"/>
+    <mesh name="YQL_Link"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/YQL_Link.STL"/>
+    <mesh name="ZH_Link"       content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/ZH_Link.STL"/>
+    <mesh name="ZHL_Link"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/ZHL_Link.STL"/>
+    <mesh name="YH_Link"       content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/YH_Link.STL"/>
+    <mesh name="YHL_Link"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/YHL_Link.STL"/>
+    <mesh name="ZLD_Link"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/ZLD_Link.STL"/>
+    <mesh name="YLD_Link"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/YLD_Link.STL"/>
+    <mesh name="C1_Link"       content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/C1_Link.STL"/>
+    <mesh name="C2_Link"       content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/C2_Link.STL"/>
+    <mesh name="C3_Link"       content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/C3_Link.STL"/>
+    <mesh name="C4_Link"       content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/C4_Link.STL"/>
+    <mesh name="C5_Link"       content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/C5_Link.STL"/>
+    <mesh name="C6_Link"       content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/C6_Link.STL"/>
+    <mesh name="C7_Link"       content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/C7_Link.STL"/>
+    <mesh name="C8_Link"       content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/C8_Link.STL"/>
+    <mesh name="IMU_Link"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/IMU_Link.STL"/>
+    <mesh name="XJ_Link"       content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/XJ_Link.STL"/>
+    <mesh name="Trunk_base"    content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Trunk_base.STL"/>
+    <mesh name="Trunk1"        content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Trunk1.STL"/>
+    <mesh name="Trunk2"        content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Trunk2.STL"/>
+    <mesh name="Trunk3"        content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Trunk3.STL"/>
+    <mesh name="Trunk4"        content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Trunk4.STL"/>
+    <mesh name="Base_L"        content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Base_L.STL"/>
+    <mesh name="Joint1_L"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Joint1_L.STL"/>
+    <mesh name="Joint2_L"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Joint2_L.STL"/>
+    <mesh name="Joint3_L"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Joint3_L.STL"/>
+    <mesh name="Joint4_L"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Joint4_L.STL"/>
+    <mesh name="Joint5_L"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Joint5_L.STL"/>
+    <mesh name="Joint6_L"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Joint6_L.STL"/>
+    <mesh name="Joint7_L"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Joint7_L.STL"/>
+    <mesh name="Base_R"        content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Base_R.STL"/>
+    <mesh name="Joint1_R"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Joint1_R.STL"/>
+    <mesh name="Joint2_R"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Joint2_R.STL"/>
+    <mesh name="Joint3_R"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Joint3_R.STL"/>
+    <mesh name="Joint4_R"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Joint4_R.STL"/>
+    <mesh name="Joint5_R"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Joint5_R.STL"/>
+    <mesh name="Joint6_R"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Joint6_R.STL"/>
+    <mesh name="Joint7_R"      content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Joint7_R.STL"/>
+    <mesh name="Head1"         content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Head1.STL"/>
+    <mesh name="Head2"         content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Head2.STL"/>
+    <mesh name="cam_install_head"    content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/cam_install_head.STL"/>
+    <mesh name="cam_install_body"    content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/cam_install_body.STL"/>
+    <mesh name="right_flange_link"   content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/right_flange_link.STL"/>
+    <mesh name="cam_install_rightarm" content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/cam_install_rightarm.STL"/>
+    <mesh name="Rbase_link"          content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Rbase_link.STL"/>
+    <mesh name="rightfinger1_Link"   content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/rightfinger1_Link.STL"/>
+    <mesh name="rightfinger2_Link"   content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/rightfinger2_Link.STL"/>
+    <mesh name="left_flange_link"    content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/left_flange_link.STL"/>
+    <mesh name="cam_install_leftarm" content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/cam_install_leftarm.STL"/>
+    <mesh name="Lbase_link"          content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/Lbase_link.STL"/>
+    <mesh name="leftfinger1_Link"    content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/leftfinger1_Link.STL"/>
+    <mesh name="leftfinger2_Link"    content_type="model/stl" file="KITT1_5V3robot_dual_dahuan_urdf/leftfinger2_Link.STL"/>
+  </asset>
+
+  <!-- ================================================================ -->
+  <!-- 世界体（机器人 + 场景物体） -->
+  <!-- ================================================================ -->
+  <worldbody>
+
+    <!-- ===== 光照 ===== -->
+    <light name="sun" directional="true" diffuse="0.7 0.7 0.7" specular="0.2 0.2 0.2"
+           pos="5 0 8" dir="-0.4 0 -1"/>
+    <light name="fill" directional="true" diffuse="0.4 0.4 0.4"
+           pos="-3 -3 3" dir="0.5 0.5 -1"/>
+
+    <!-- ===== 地面 ===== -->
+    <geom type="plane" size="3 3 0.1" rgba="0.30 0.35 0.42 1"/>
+    <geom type="box" pos="1 0 -0.005" size="1.5 0.02 0.005" rgba="0.85 0.85 0.85 0.4"/>
+    <geom type="box" pos="1 0 -0.005" size="0.02 1.5 0.005" rgba="0.85 0.85 0.85 0.4"/>
+
+    <!-- ============================================================= -->
+    <!-- 场景物体：平板 Mocap 驱动体（不受物理影响，程序直接设位姿） -->
+    <!-- 平板尺寸: 半尺寸 0.21(长) × 0.12(短) × 0.008(厚) -->
+    <!-- 绕Z轴旋转90°后：长边沿Y(±0.21)正对机器人，短边在左右 -->
+    <!-- 左右夹爪水平侧向夹持短边，手指开合沿Z夹住板厚，避免穿模 -->
+    <!-- ============================================================= -->
+    <body name="plate_mocap" mocap="true" pos="0.35 0 0.98">
+      <geom type="box" size="0.21 0.12 0.008" rgba="0.82 0.55 0.15 0.18" 
+            contype="0" conaffinity="0"/>
+    </body>
+
+    <!-- ============================================================= -->
+    <!-- 场景物体：实际平板物理浮体（weld 约束跟随 mocap） -->
+    <!-- ============================================================= -->
+    <body name="plate" pos="0.35 0 0.98">
+      <freejoint name="plate_freejoint"/>
+      <!-- 平板主体：半尺寸 0.21×0.12，旋转90°后长边沿Y(±0.21)，短边沿X -->
+      <geom type="box" size="0.21 0.12 0.008" 
+            rgba="0.82 0.55 0.15 1" name="plate_geom"/>
+      <!-- 方向标记 -->
+      <geom type="box" pos="0.19 0 0" size="0.012 0.02 0.005" rgba="0 1 0 1" contype="0" conaffinity="0"/>
+      <geom type="box" pos="0 0.10 0" size="0.03 0.01 0.005"  rgba="0 0 1 1" contype="0" conaffinity="0"/>
+      <!-- 板面中心标记点 -->
+      <site name="plate_center" type="sphere" size="0.01" rgba="1 1 0 0.8"/>
+
+    </body>
+
+    <!-- ============================================================= -->
+    <!-- 水杯（自由浮体，放置在平板右侧） -->
+    <!-- freejoint 必须是 worldbody 的直接子体 -->
+    <!-- ============================================================= -->
+    <body name="cup" pos="0.455 0.08 0.96">
+      <freejoint name="cup_freejoint"/>
+      <geom type="box" size="0.04 0.04 0.05" rgba="0.15 0.55 0.85 0.85" name="cup_geom"/>
+      <geom type="box" pos="0 0 0.04"  size="0.035 0.035 0.002" rgba="0.20 0.60 0.90 0.5"/>
+      <geom type="box" pos="0 0 -0.04" size="0.035 0.035 0.002" rgba="0.10 0.40 0.70 0.5"/>
+    </body>
+
+    <!-- ============================================================= -->
+    <!-- 水体质量块（自由浮体，悬浮于水杯内） -->
+    <!-- 模拟水面重心偏移：小质量刚体靠接触力停留在杯内 -->
+    <!-- ============================================================= -->
+    <body name="water_mass" pos="0.455 0.08 0.985">
+      <freejoint name="water_freejoint"/>
+      <geom type="box" size="0.030 0.030 0.018" 
+            rgba="0.25 0.60 0.95 0.45" mass="0.10" name="water_geom"/>
+    </body>
+
+    <!-- ============================================================= -->
+    <!-- 自由滚动小球（自由浮体，放置在平板左侧） -->
+    <!-- ============================================================= -->
+    <body name="ball" pos="0.355 -0.08 0.93">
+      <freejoint name="ball_freejoint"/>
+      <geom type="sphere" size="0.02" rgba="0.95 0.25 0.25 1" mass="0.05" name="ball_geom"/>
+      <geom type="cylinder" size="0.004 0.028" rgba="1 1 1 0.5" zaxis="0 0 1" contype="0" conaffinity="0"/>
+      <site name="ball_site" type="sphere" size="0.005" rgba="1 1 1 1"/>
+    </body>
+
+    <!-- ============================================================= -->
+    <!-- 机器人本体（KITT1_5V3 双足双臂人形机器人） -->
+    <!-- 
+      运动学树：
+        世界 (worldbody)
+          ├── plate_mocap (mocap 驱动体, 无物理)
+          ├── plate (free 浮体, 通过 weld 跟随 mocap)
+          ├── cup (free 浮体, 在平板上方右侧)
+          ├── water_mass (free 浮体, 在水杯内部)
+          ├── ball (free 浮体, 在平板上方左侧)
+          └── [腿×4] → Trunk1 → Trunk2 → Trunk3 → Trunk4
+                  ├── Joint1_L → ... → Joint7_L (左臂 TCP)
+                  │       └── leftfinger1, leftfinger2
+                  ├── Joint1_R → ... → Joint7_R (右臂 TCP)
+                  │       └── rightfinger1, rightfinger2
+                  └── Head1 → Head2
+        
+      关节 DOF 地址映射（按 XML 出现顺序）：
+        0-7:   腿关节 (ZQ, ZQL, YQ, YQL, ZH, ZHL, YH, YHL)
+        8-11:  躯干关节 (trunk_joint_1~4)
+        12-18: 左臂关节 (left_arm_joint_1~7)
+        19:    左手指1 (leftfinger1_joint)
+        20:    左手指2 (leftfinger2_joint)
+        21-27: 右臂关节 (right_arm_joint_1~7)
+        28:    右手指1 (rightfinger1_joint)
+        29:    右手指2 (rightfinger2_joint)
+        30-31: 头部 (head_joint_1~2)
+        32-38: 平板 free joint (3 pos + 4 quat)
+        39-45: 水杯 free joint
+        46-52: 水体 free joint
+        53-59: 小球 free joint
+        
+        总计：32 个机器人关节 DOF + 4×7=28 个自由刚体 DOF = 60 DOF
+    -->
+    <!-- ============================================================= -->
+
+    <!-- == 世界级静态几何 == -->
+    <geom type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="YD_link" contype="2" conaffinity="31"/>
+    <geom pos="0.220969 0.2007 0.366024" quat="0.255976 0.109346 0.0382559 0.959717" type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="ZLD_Link" contype="2" conaffinity="31"/>
+    <geom pos="-0.22097 -0.2007 0.366024" quat="0.959717 0.0382559 -0.109346 -0.255976" type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="YLD_Link" contype="2" conaffinity="31"/>
+    <geom pos="-0.173909 -0.2725 0.228959" quat="0.707107 0.707107 0 0" type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="C1_Link" contype="2" conaffinity="31"/>
+    <geom pos="0.173974 -0.2725 0.228585" quat="0.707107 0.707107 0 0" type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="C2_Link" contype="2" conaffinity="31"/>
+    <geom pos="0.32715 -0.181305 0.228585" quat="0.575516 0.575516 0.41083 0.41083" type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="C3_Link" contype="2" conaffinity="31"/>
+    <geom pos="0.32715 0.181305 0.228585" quat="0.41083 0.41083 0.575516 0.575516" type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="C4_Link" contype="2" conaffinity="31"/>
+    <geom pos="0.173974 0.2725 0.228585" quat="0 0 0.707107 0.707107" type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="C5_Link" contype="2" conaffinity="31"/>
+    <geom pos="-0.173909 0.2725 0.228959" quat="0 0 -0.707107 -0.707107" type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="C6_Link" contype="2" conaffinity="31"/>
+    <geom pos="-0.321195 0.172186 0.228581" quat="0.459049 0.459049 -0.537842 -0.537842" type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="C7_Link" contype="2" conaffinity="31"/>
+    <geom pos="-0.321195 -0.172186 0.228581" quat="0.537842 0.537842 -0.459049 -0.459049" type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="C8_Link" contype="2" conaffinity="31"/>
+    <geom pos="0 0 0.1" quat="1 0 0 0" type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="IMU_Link" contype="2" conaffinity="31"/>
+    <geom pos="0.34185 0.0175 0.199" quat="0.499998 0.5 0.500002 0.5" type="mesh" rgba="0.86667 0.9098 1 1" mesh="XJ_Link" contype="2" conaffinity="31"/>
+    <geom pos="0.1 0 0.062" quat="1 0 0 0" type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="Trunk_base" contype="2" conaffinity="31"/>
+
+    <!-- == 左前腿 (ZQ → ZQL) == -->
+    <body name="ZQ_Link" pos="0.230716 0.217384 0.206001">
+      <inertial pos="-0.000669849 -0.0241901 -0.0616279" quat="0.663864 -0.25099 0.249538 0.658801" mass="0.649768" diaginertia="0.000791176 0.00076148 0.000312348"/>
+      <joint name="ZQ" axis="0 0 -1"/>
+      <geom type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="ZQ_Link"/>
+      <body name="ZQL_Link" pos="-0.000716532 0.000616031 -0.136" quat="0.707107 0.707107 0 0">
+        <inertial pos="-2.43385e-06 2.85294e-06 0.000784617" quat="0.013698 0.706959 -0.0135967 0.706991" mass="1.22319" diaginertia="0.00376745 0.00205205 0.00205173"/>
+        <joint name="ZQL" axis="0 0 1"/>
+        <geom type="mesh" rgba="0.25098 0.25098 0.25098 1" mesh="ZQL_Link"/>
+      </body>
+    </body>
+
+    <!-- == 右前腿 (YQ → YQL) == -->
+    <body name="YQ_Link" pos="0.229283 -0.217384 0.206001">
+      <inertial pos="0.000669849 0.0241901 -0.0616279" quat="0.663864 0.25099 -0.249538 0.658801" mass="0.649768" diaginertia="0.000791176 0.00076148 0.000312348"/>
+      <joint name="YQ" axis="0 0 -1"/>
+      <geom type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="YQ_Link"/>
+      <body name="YQL_Link" pos="0.000716532 -0.000616031 -0.136" quat="0 0 0.707107 0.707107">
+        <inertial pos="-2.43385e-06 2.85294e-06 0.000784617" quat="0.013698 0.706959 -0.0135967 0.706991" mass="1.22319" diaginertia="0.00376745 0.00205205 0.00205173"/>
+        <joint name="YQL" axis="0 0 1"/>
+        <geom type="mesh" rgba="0.25098 0.25098 0.25098 1" mesh="YQL_Link"/>
+      </body>
+    </body>
+
+    <!-- == 左后腿 (ZH → ZHL) == -->
+    <body name="ZH_Link" pos="-0.229284 0.217384 0.205999">
+      <inertial pos="-0.000669849 -0.0241901 -0.0616279" quat="0.663864 -0.25099 0.249538 0.658801" mass="0.649768" diaginertia="0.000791176 0.00076148 0.000312348"/>
+      <joint name="ZH" axis="0 0 -1"/>
+      <geom type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="ZH_Link"/>
+      <body name="ZHL_Link" pos="-0.000716532 0.000616031 -0.136" quat="0.707107 0.707107 0 0">
+        <inertial pos="-1.64764e-06 3.3687e-06 0.000784617" quat="0.102225 0.699677 -0.102121 0.699696" mass="1.22319" diaginertia="0.00376745 0.00205205 0.00205173"/>
+        <joint name="ZHL" axis="0 0 1"/>
+        <geom type="mesh" rgba="0.25098 0.25098 0.25098 1" mesh="ZHL_Link"/>
+      </body>
+    </body>
+
+    <!-- == 右后腿 (YH → YHL) == -->
+    <body name="YH_Link" pos="-0.230717 -0.217384 0.205999">
+      <inertial pos="0.000669849 0.0241901 -0.0616279" quat="0.663864 0.25099 -0.249538 0.658801" mass="0.649768" diaginertia="0.000791176 0.00076148 0.000312348"/>
+      <joint name="YH" axis="0 0 -1"/>
+      <geom type="mesh" rgba="0.866667 0.866667 0.890196 1" mesh="YH_Link"/>
+      <body name="YHL_Link" pos="0.000716532 -0.000616031 -0.136" quat="0 0 0.707107 0.707107">
+        <inertial pos="-2.43385e-06 2.85294e-06 0.000784617" quat="0.013698 0.706959 -0.0135967 0.706991" mass="1.22319" diaginertia="0.00376745 0.00205205 0.00205173"/>
+        <joint name="YHL" axis="0 0 1"/>
+        <geom type="mesh" rgba="0.25098 0.25098 0.25098 1" mesh="YHL_Link"/>
+      </body>
+    </body>
+
+    <!-- == 躯干链 (Trunk1 → Trunk2 → Trunk3 → Trunk4) == -->
+    <body name="Trunk1" pos="0.1 0 0.19">
+      <inertial pos="0.00237969 0.000911178 0.16627" quat="0.707118 -0.00608137 -0.00596688 0.707044" mass="14.5093" diaginertia="0.117355 0.0910522 0.0345849"/>
+      <joint name="trunk_joint_1" axis="0 1 0" range="-1.1781 0" actuatorfrcrange="-411 411"/>
+      <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="Trunk1"/>
+      <body name="Trunk2" pos="0 0 0.33">
+        <inertial pos="4.69888e-05 -0.0104344 0.190238" quat="0.706996 -0.0102545 -0.0101492 0.707071" mass="11.9271" diaginertia="0.121018 0.105425 0.0223286"/>
+        <joint name="trunk_joint_2" axis="0 -1 0" range="-2.5482 1.7453" actuatorfrcrange="-411 411"/>
+        <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="Trunk2"/>
+        <body name="Trunk3" pos="0 0 0.38" quat="0 0 0 -1">
+          <inertial pos="6.70816e-05 -0.0016552 0.0273619" quat="0.70705 0.00338168 0.00346554 0.707147" mass="7.64391" diaginertia="0.0277826 0.0166595 0.0160071"/>
+          <joint name="trunk_joint_3" axis="0 -1 0" range="-1.5708 1.5708" actuatorfrcrange="-411 411"/>
+          <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="Trunk3"/>
+          <body name="Trunk4" pos="0 0 0.108" quat="0 0 0 1">
+            <inertial pos="0.0100751 -0.00219069 0.249907" quat="0.998453 0.0263266 0.04841 -0.00738414" mass="27.391" diaginertia="0.35341 0.294268 0.138238"/>
+            <joint name="trunk_joint_4" axis="0 0 1" range="-3.1416 3.1416" actuatorfrcrange="-102 102"/>
+            <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="Trunk4"/>
+            <geom pos="0 0.0509 0.413" quat="0.707105 -0.707108 0 0" type="mesh" rgba="1 0 0 1" mesh="Base_L"/>
+            <geom pos="0 -0.0509 0.413" quat="0.707105 0.707108 0 0" type="mesh" rgba="1 0 0 1" mesh="Base_R"/>
+            <geom pos="0.11189 -0.0115 0.32596" quat="0.499998 -0.5 0.500002 -0.5" type="mesh" rgba="0.792157 0.819608 0.933333 1" mesh="cam_install_body"/>
+
+            <!-- ===== 左臂 (Joint1_L → Joint7_L) ===== -->
+            <body name="Joint1_L" pos="0 0.2254 0.412999" quat="0.707105 -0.707108 0 0">
+              <inertial pos="2.347e-05 0.0055715 -0.03076" quat="0.711599 0.0343691 -0.0341702 0.700912" mass="1.9705" diaginertia="0.00529754 0.00492285 0.00184874"/>
+              <joint name="left_arm_joint_1" axis="0 0 1" range="-3.1067 3.1067" actuatorfrcrange="-108 108" damping="0.2"/>
+              <geom type="mesh" rgba="0 1 0 1" mesh="Joint1_L"/>
+              <body name="Joint2_L" quat="0.707105 0.707108 0 0">
+                <inertial pos="0.00013483 0.0617046 0.00950639" quat="0.643375 0.765551 -3.57328e-05 0.000294349" mass="2.24398" diaginertia="0.0119493 0.0112156 0.00338374"/>
+                <joint name="left_arm_joint_2" axis="0 0 1" range="-2.0944 2.0944" actuatorfrcrange="-108 108" damping="0.2"/>
+                <geom type="mesh" rgba="0 0 1 1" mesh="Joint2_L"/>
+                <body name="Joint3_L" pos="0 0.287 0" quat="0.707105 -0.707108 0 0">
+                  <inertial pos="0.00968562 0.00246599 -0.046273" quat="0.782446 -0.0355285 -0.0735516 0.617337" mass="1.9242" diaginertia="0.00765215 0.00730789 0.0016338"/>
+                  <joint name="left_arm_joint_3" axis="0 0 1" range="-3.1067 3.1067" actuatorfrcrange="-66 66" damping="0.2"/>
+                  <geom type="mesh" rgba="1 0 0 1" mesh="Joint3_L"/>
+                  <body name="Joint4_L" pos="0.018 0 0" quat="-2.59734e-06 2.59735e-06 -0.707108 0.707105">
+                    <inertial pos="0.00850411 -0.0471822 0.00941509" quat="0.741754 0.628694 0.0774999 -0.220317" mass="1.6085" diaginertia="0.00603244 0.00535875 0.00198228"/>
+                    <joint name="left_arm_joint_4" axis="0 0 1" range="-2.5307 1.0472" actuatorfrcrange="-66 66" damping="0.2"/>
+                    <geom type="mesh" rgba="0 1 0 1" mesh="Joint4_L"/>
+                    <body name="Joint5_L" pos="0.018 -0.314 0" quat="-2.59734e-06 2.59735e-06 -0.707108 0.707105">
+                      <inertial pos="0.00051127 0.00101064 -0.112717" quat="0.999438 -0.00995046 -0.00675781 0.0312997" mass="2.0883" diaginertia="0.00626924 0.00564262 0.00243436"/>
+                      <joint name="left_arm_joint_5" axis="0 0 1" range="-3.1067 3.1067" actuatorfrcrange="-18 18" damping="0.1"/>
+                      <geom type="mesh" rgba="0 0 1 1" mesh="Joint5_L"/>
+                      <body name="Joint6_L" quat="0.499998 0.5 -0.5 0.500002">
+                        <inertial pos="0.00032659 0.00531336 -0.00030182" quat="0.718188 -0.0225408 0.00407878 0.695472" mass="0.72496" diaginertia="0.000517351 0.000460362 0.000425057"/>
+                        <joint name="left_arm_joint_6" axis="0 0 1" range="-1.0472 1.0472" actuatorfrcrange="-18 18" damping="0.1"/>
+                        <geom type="mesh" rgba="1 0 0 1" mesh="Joint6_L"/>
+                        <body name="Joint7_L" quat="0.499998 0.5 -0.5 0.500002">
+                          <inertial pos="-0.00451879 -0.134377 -0.00192829" quat="0.708519 0.70505 -0.0299021 -0.00336971" mass="3.80678" diaginertia="0.0137858 0.0129356 0.00379397"/>
+                          <joint name="left_arm_joint_7" axis="0 0 1" range="-1.5708 1.5708" actuatorfrcrange="-18 18" damping="0.1"/>
+                          <geom type="mesh" rgba="0 1 0 1" mesh="Joint7_L"/>
+                          <geom pos="0 -0.095 0" quat="0.000563312 0.000562864 0.707388 -0.706825" type="mesh" rgba="0.866667 0.909804 1 1" mesh="left_flange_link"/>
+                          <geom pos="-0.00884695 -0.128766 -0.0961031" quat="0.765788 0.643092 -0.000609818 0.000512112" type="mesh" rgba="1 1 1 1" mesh="cam_install_leftarm"/>
+                          <geom pos="1.26827e-08 -0.105 -7.96326e-06" quat="0.000563312 0.000562864 0.707388 -0.706825" type="mesh" rgba="0.866667 0.909804 1 1" mesh="Lbase_link"/>
+                          <body name="leftfinger1_Link" pos="0.0265722 -0.225489 -0.0132756" quat="0.000563312 0.000562864 0.707388 -0.706825">
+                            <inertial pos="-0.00292894 -0.0122399 0.0387093" quat="0.959608 0.027899 0.00720119 -0.279861" mass="0.0246617" diaginertia="1.85854e-05 1.81975e-05 1.6148e-06"/>
+                            <joint name="leftfinger1_joint" type="slide" axis="1 0 0" range="0 0.023"/>
+                            <geom type="mesh" rgba="0.894118 0.894118 0.894118 1" mesh="leftfinger1_Link"/>
+                          </body>
+                          <body name="leftfinger2_Link" pos="-0.0265718 -0.22551 0.0130678" quat="0.000563312 0.000562864 0.707388 -0.706825">
+                            <inertial pos="0.00292894 0.0122399 0.0387093" quat="0.959608 -0.027899 -0.00720119 -0.279861" mass="0.0246617" diaginertia="1.85854e-05 1.81975e-05 1.6148e-06"/>
+                            <joint name="leftfinger2_joint" type="slide" axis="1 0 0" range="-0.023 0"/>
+                            <geom type="mesh" rgba="0.894118 0.894118 0.894118 1" mesh="leftfinger2_Link"/>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+
+            <!-- ===== 右臂 (Joint1_R → Joint7_R) ===== -->
+            <body name="Joint1_R" pos="0 -0.2254 0.412999" quat="0.707105 0.707108 0 0">
+              <inertial pos="2.347e-05 0.0055715 -0.03076" quat="0.711599 0.0343691 -0.0341702 0.700912" mass="1.9705" diaginertia="0.00529754 0.00492285 0.00184874"/>
+              <joint name="right_arm_joint_1" axis="0 0 1" range="-3.1067 3.1067" actuatorfrcrange="-108 108" damping="0.2"/>
+              <geom type="mesh" rgba="0 1 0 1" mesh="Joint1_R"/>
+              <body name="Joint2_R" quat="0.707105 0.707108 0 0">
+                <inertial pos="0.00013483 0.0617046 0.00950639" quat="0.643375 0.765551 -3.57328e-05 0.000294349" mass="2.24398" diaginertia="0.0119493 0.0112156 0.00338374"/>
+                <joint name="right_arm_joint_2" axis="0 0 1" range="-2.0944 2.0944" actuatorfrcrange="-108 108" damping="0.2"/>
+                <geom type="mesh" rgba="0 0 1 1" mesh="Joint2_R"/>
+                <body name="Joint3_R" pos="0 0.287 0" quat="0.707105 -0.707108 0 0">
+                  <inertial pos="0.00968562 0.00246599 -0.046273" quat="0.782446 -0.0355285 -0.0735516 0.617337" mass="1.9242" diaginertia="0.00765215 0.00730789 0.0016338"/>
+                  <joint name="right_arm_joint_3" axis="0 0 1" range="-3.1067 3.1067" actuatorfrcrange="-66 66" damping="0.2"/>
+                  <geom type="mesh" rgba="1 0 0 1" mesh="Joint3_R"/>
+                  <body name="Joint4_R" pos="0.018 0 0" quat="-2.59734e-06 2.59735e-06 -0.707108 0.707105">
+                    <inertial pos="0.00850411 -0.0471822 0.00941509" quat="0.741754 0.628694 0.0774999 -0.220317" mass="1.6085" diaginertia="0.00603244 0.00535875 0.00198228"/>
+                    <joint name="right_arm_joint_4" axis="0 0 1" range="-2.5307 1.0472" actuatorfrcrange="-66 66" damping="0.2"/>
+                    <geom type="mesh" rgba="0 1 0 1" mesh="Joint4_R"/>
+                    <body name="Joint5_R" pos="0.018 -0.314 0" quat="-2.59734e-06 2.59735e-06 -0.707108 0.707105">
+                      <inertial pos="-0.00051127 -0.00101064 -0.112717" quat="0.999438 0.00995046 0.00675781 0.0312997" mass="2.0883" diaginertia="0.00626924 0.00564262 0.00243436"/>
+                      <joint name="right_arm_joint_5" axis="0 0 1" range="-3.1067 3.1067" actuatorfrcrange="-18 18" damping="0.1"/>
+                      <geom type="mesh" rgba="0 0 1 1" mesh="Joint5_R"/>
+                      <body name="Joint6_R" quat="0.499998 0.5 -0.5 0.500002">
+                        <inertial pos="0.00032659 -0.00531336 0.00030182" quat="0.695472 -0.00407878 0.0225408 0.718188" mass="0.72496" diaginertia="0.000517351 0.000460362 0.000425057"/>
+                        <joint name="right_arm_joint_6" axis="0 0 1" range="-1.0472 1.0472" actuatorfrcrange="-18 18" damping="0.1"/>
+                        <geom type="mesh" rgba="1 0 0 1" mesh="Joint6_R"/>
+                        <body name="Joint7_R" quat="0.499998 0.5 -0.5 0.500002">
+                          <inertial pos="-0.00451879 -0.134377 -0.00192829" quat="0.708519 0.70505 -0.0299021 -0.00336971" mass="3.80678" diaginertia="0.0137858 0.0129356 0.00379397"/>
+                          <joint name="right_arm_joint_7" axis="0 0 1" range="-1.5708 1.5708" actuatorfrcrange="-18 18" damping="0.1"/>
+                          <geom type="mesh" rgba="0 1 0 1" mesh="Joint7_R"/>
+                          <geom pos="0 -0.095 0" quat="0.000563312 0.000562864 0.707388 -0.706825" type="mesh" rgba="0.866667 0.909804 1 1" mesh="right_flange_link"/>
+                          <geom pos="-0.00884695 -0.128766 -0.0961031" quat="0.765788 0.643092 -0.000609818 0.000512112" type="mesh" rgba="1 1 1 1" mesh="cam_install_rightarm"/>
+                          <geom pos="1.26827e-08 -0.105 -7.96326e-06" quat="0.000563312 0.000562864 0.707388 -0.706825" type="mesh" rgba="0.866667 0.909804 1 1" mesh="Rbase_link"/>
+                          <body name="rightfinger1_Link" pos="0.0265722 -0.225489 -0.0132756" quat="0.000563312 0.000562864 0.707388 -0.706825">
+                            <inertial pos="-0.00292894 -0.0122399 0.0387093" quat="0.959608 0.027899 0.00720119 -0.279861" mass="0.0246617" diaginertia="1.85854e-05 1.81975e-05 1.6148e-06"/>
+                            <joint name="rightfinger1_joint" type="slide" axis="1 0 0" range="0 0.023"/>
+                            <geom type="mesh" rgba="0.894118 0.894118 0.894118 1" mesh="rightfinger1_Link"/>
+                          </body>
+                          <body name="rightfinger2_Link" pos="-0.0265718 -0.22551 0.0130678" quat="0.000563312 0.000562864 0.707388 -0.706825">
+                            <inertial pos="0.00292894 0.0122399 0.0387093" quat="0.959608 -0.027899 -0.00720119 -0.279861" mass="0.0246617" diaginertia="1.85854e-05 1.81975e-05 1.6148e-06"/>
+                            <joint name="rightfinger2_joint" type="slide" axis="1 0 0" range="-0.023 0"/>
+                            <geom type="mesh" rgba="0.894118 0.894118 0.894118 1" mesh="rightfinger2_Link"/>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+
+            <!-- ===== 头部 (Head1 → Head2) ===== -->
+            <body name="Head1" pos="0.01 0 0.487">
+              <inertial pos="-5.32376e-06 0.00106971 0.0315578" quat="0.43294 0.665536 -0.509054 0.332398" mass="0.516031" diaginertia="0.000124266 0.000123015 0.000107153"/>
+              <joint name="head_joint_1" axis="0 0 1" range="-1.5708 1.5708" actuatorfrcrange="-6.6 6.6"/>
+              <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="Head1"/>
+              <body name="Head2" pos="0 -0.0255 0.042">
+                <inertial pos="0.0464546 0.0260958 0.0879487" quat="-0.00814495 0.495805 0.057177 0.866511" mass="2.07851" diaginertia="0.00391101 0.00308266 0.00211175"/>
+                <joint name="head_joint_2" axis="0 -1 0" range="-0.3491 0.6981" actuatorfrcrange="-6.6 6.6"/>
+                <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="Head2"/>
+                <geom pos="0.0759659 0.059 0.0907506" quat="0.5 -0.5 0.5 -0.5" type="mesh" rgba="0 1 0 1" mesh="cam_install_head"/>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- ================================================================ -->
+  <!-- 等式约束 -->
+  <!-- ================================================================ -->
+  <equality>
+    <!-- 平板 mocap 焊接约束：驱动平板平滑运动 -->
+    <weld name="plate_mocap_weld"
+          body1="plate_mocap" body2="plate"
+          solref="0.005 0.8" solimp="0.9 0.99 0.0001"/>
+
+    <!-- 手指镜像联动约束 -->
+    <joint joint1="rightfinger1_joint" joint2="rightfinger2_joint" polycoef="0 -1.0 0.0 0"/>
+    <joint joint1="leftfinger1_joint"  joint2="leftfinger2_joint" polycoef="0 -1.0 0.0 0"/>
+  </equality>
+
+  <!-- ================================================================ -->
+  <!-- 接触排除（关节链父子体不碰撞） -->
+  <!-- ================================================================ -->
+  <contact>
+    <exclude body1="ZQ_Link" body2="ZQL_Link"/>
+    <exclude body1="YQ_Link" body2="YQL_Link"/>
+    <exclude body1="ZH_Link" body2="ZHL_Link"/>
+    <exclude body1="YH_Link" body2="YHL_Link"/>
+    <exclude body1="Trunk1" body2="Trunk2"/>
+    <exclude body1="Trunk2" body2="Trunk3"/>
+    <exclude body1="Trunk3" body2="Trunk4"/>
+    <exclude body1="Trunk4" body2="Joint1_L"/>
+    <exclude body1="Trunk4" body2="Joint1_R"/>
+    <exclude body1="Trunk4" body2="Head1"/>
+    <exclude body1="Joint1_L" body2="Joint2_L"/>
+    <exclude body1="Joint2_L" body2="Joint3_L"/>
+    <exclude body1="Joint3_L" body2="Joint4_L"/>
+    <exclude body1="Joint4_L" body2="Joint5_L"/>
+    <exclude body1="Joint5_L" body2="Joint6_L"/>
+    <exclude body1="Joint6_L" body2="Joint7_L"/>
+    <exclude body1="Joint1_R" body2="Joint2_R"/>
+    <exclude body1="Joint2_R" body2="Joint3_R"/>
+    <exclude body1="Joint3_R" body2="Joint4_R"/>
+    <exclude body1="Joint4_R" body2="Joint5_R"/>
+    <exclude body1="Joint5_R" body2="Joint6_R"/>
+    <exclude body1="Joint6_R" body2="Joint7_R"/>
+    <exclude body1="Joint7_L" body2="leftfinger1_Link"/>
+    <exclude body1="Joint7_L" body2="leftfinger2_Link"/>
+    <exclude body1="Joint7_R" body2="rightfinger1_Link"/>
+    <exclude body1="Joint7_R" body2="rightfinger2_Link"/>
+    <exclude body1="leftfinger1_Link" body2="leftfinger2_Link"/>
+    <exclude body1="rightfinger1_Link" body2="rightfinger2_Link"/>
+    <exclude body1="Head1" body2="Head2"/>
+  </contact>
+
+  <!-- ================================================================ -->
+  <!-- 执行器（全部 position 位置型） -->
+  <!-- ================================================================ -->
+  <actuator>
+    <!-- 腿部 (ACT 0-7) -->
+    <position name="ZQ_act"      joint="ZQ"   ctrlrange="-3.14 3.14"     kp="100"/>
+    <position name="ZQL_act"     joint="ZQL"  ctrlrange="-3.14 3.14"     kp="100"/>
+    <position name="YQ_act"      joint="YQ"   ctrlrange="-3.14 3.14"     kp="100"/>
+    <position name="YQL_act"     joint="YQL"  ctrlrange="-3.14 3.14"     kp="100"/>
+    <position name="ZH_act"      joint="ZH"   ctrlrange="-3.14 3.14"     kp="100"/>
+    <position name="ZHL_act"     joint="ZHL"  ctrlrange="-3.14 3.14"     kp="100"/>
+    <position name="YH_act"      joint="YH"   ctrlrange="-3.14 3.14"     kp="100"/>
+    <position name="YHL_act"     joint="YHL"  ctrlrange="-3.14 3.14"     kp="100"/>
+
+    <!-- 躯干 (ACT 8-11) -->
+    <position name="t1_act" joint="trunk_joint_1" ctrlrange="-1.1781 0"       kp="200"/>
+    <position name="t2_act" joint="trunk_joint_2" ctrlrange="-2.5482 1.7453"  kp="200"/>
+    <position name="t3_act" joint="trunk_joint_3" ctrlrange="-1.5708 1.5708"  kp="80"/>
+    <position name="t4_act" joint="trunk_joint_4" ctrlrange="-3.1416 3.1416"  kp="50"/>
+
+    <!-- 左臂 (ACT 12-18) ★ 控制目标 -->
+    <position name="LA1_act" joint="left_arm_joint_1"  ctrlrange="-3.1067 3.1067"  kp="50"/>
+    <position name="LA2_act" joint="left_arm_joint_2"  ctrlrange="-2.0944 2.0944"  kp="50"/>
+    <position name="LA3_act" joint="left_arm_joint_3"  ctrlrange="-3.1067 3.1067"  kp="50"/>
+    <position name="LA4_act" joint="left_arm_joint_4"  ctrlrange="-2.5307 1.0472"  kp="50"/>
+    <position name="LA5_act" joint="left_arm_joint_5"  ctrlrange="-3.1067 3.1067"  kp="30"/>
+    <position name="LA6_act" joint="left_arm_joint_6"  ctrlrange="-1.0472 1.0472"  kp="30"/>
+    <position name="LA7_act" joint="left_arm_joint_7"  ctrlrange="-1.5708 1.5708"  kp="20"/>
+
+    <!-- 左手指 (ACT 19) -->
+    <position name="LF1_act" joint="leftfinger1_joint"  ctrlrange="0 0.023" kp="20"/>
+
+    <!-- 右臂 (ACT 20-26) ★ 控制目标 -->
+    <position name="RA1_act" joint="right_arm_joint_1" ctrlrange="-3.1067 3.1067"  kp="50"/>
+    <position name="RA2_act" joint="right_arm_joint_2" ctrlrange="-2.0944 2.0944"  kp="50"/>
+    <position name="RA3_act" joint="right_arm_joint_3" ctrlrange="-3.1067 3.1067"  kp="50"/>
+    <position name="RA4_act" joint="right_arm_joint_4" ctrlrange="-2.5307 1.0472"  kp="50"/>
+    <position name="RA5_act" joint="right_arm_joint_5" ctrlrange="-3.1067 3.1067"  kp="30"/>
+    <position name="RA6_act" joint="right_arm_joint_6" ctrlrange="-1.0472 1.0472"  kp="30"/>
+    <position name="RA7_act" joint="right_arm_joint_7" ctrlrange="-1.5708 1.5708"  kp="20"/>
+
+    <!-- 右手指 (ACT 27) -->
+    <position name="RF1_act" joint="rightfinger1_joint" ctrlrange="0 0.023" kp="20"/>
+
+    <!-- 头部 (ACT 28-29) -->
+    <position name="H1_act" joint="head_joint_1"  ctrlrange="-1.5708 1.5708"  kp="30"/>
+    <position name="H2_act" joint="head_joint_2"  ctrlrange="-0.3491 0.6981"  kp="30"/>
+  </actuator>
+
+  <!-- ================================================================ -->
+  <!-- 传感器 -->
+  <!-- ================================================================ -->
+  <sensor>
+    <!-- 平板中心位置（世界坐标 xyz） -->
+    <framepos name="plate_pos" objtype="body" objname="plate"/>
+    <!-- 平板法向量（世界坐标 z 轴方向，用于判断水平度） -->
+    <framezaxis name="plate_zaxis" objtype="body" objname="plate"/>
+    <!-- 小球位置 -->
+    <framepos name="ball_pos" objtype="body" objname="ball"/>
+    <!-- 躯干姿态（四元数，用于提取俯仰/滚转） -->
+    <framequat name="trunk_quat" objtype="body" objname="Trunk4"/>
+  </sensor>
+
+  <!-- ================================================================ -->
+  <!-- 关键帧（自由浮体在前，机器人关节在后） -->
+  <!-- qpos 布局: plate(0:7) cup(7:14) water(14:21) ball(21:28)
+                    腿(28:36) 躯干(36:40) 左臂(40:47) ... -->
+  <!-- ================================================================ -->
+  <keyframe>
+    <key name="initial" qpos="
+        0.35   0.00  0.980  0.707107 0 0 0.707107
+        0.39   0.06  1.040  1 0 0 0
+        0.39   0.06  1.065  1 0 0 0
+        0.31  -0.06  1.010  1 0 0 0
+        0 0 0 0 0 0 0 0
+        0 0 0 0
+        0 0 0 0 0 0 0
+        0 0
+        0 0 0 0 0 0 0
+        0 0
+        0 0
+    "/>
+  </keyframe>
+
+</mujoco>

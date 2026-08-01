@@ -1,0 +1,296 @@
+{
+  "model": "KITT1_5V3_dual_arm",
+  "total_joints": 32,
+  "total_actuators": 30,
+  "nv": 32,
+  "joints": [
+    {
+      "qpos_index": 0,
+      "name": "ZQ",
+      "type": "hinge",
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "qpos_index": 1,
+      "name": "ZQL",
+      "type": "hinge",
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "qpos_index": 2,
+      "name": "YQ",
+      "type": "hinge",
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "qpos_index": 3,
+      "name": "YQL",
+      "type": "hinge",
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "qpos_index": 4,
+      "name": "ZH",
+      "type": "hinge",
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "qpos_index": 5,
+      "name": "ZHL",
+      "type": "hinge",
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "qpos_index": 6,
+      "name": "YH",
+      "type": "hinge",
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "qpos_index": 7,
+      "name": "YHL",
+      "type": "hinge",
+      "range": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "qpos_index": 8,
+      "name": "trunk_joint_1",
+      "type": "hinge",
+      "range": [
+        -1.1781,
+        0.0
+      ]
+    },
+    {
+      "qpos_index": 9,
+      "name": "trunk_joint_2",
+      "type": "hinge",
+      "range": [
+        -2.5482,
+        1.7453
+      ]
+    },
+    {
+      "qpos_index": 10,
+      "name": "trunk_joint_3",
+      "type": "hinge",
+      "range": [
+        -1.5708,
+        1.5708
+      ]
+    },
+    {
+      "qpos_index": 11,
+      "name": "trunk_joint_4",
+      "type": "hinge",
+      "range": [
+        -3.1416,
+        3.1416
+      ]
+    },
+    {
+      "qpos_index": 12,
+      "name": "left_arm_joint_1",
+      "type": "hinge",
+      "range": [
+        -3.1067,
+        3.1067
+      ]
+    },
+    {
+      "qpos_index": 13,
+      "name": "left_arm_joint_2",
+      "type": "hinge",
+      "range": [
+        -2.0944,
+        2.0944
+      ]
+    },
+    {
+      "qpos_index": 14,
+      "name": "left_arm_joint_3",
+      "type": "hinge",
+      "range": [
+        -3.1067,
+        3.1067
+      ]
+    },
+    {
+      "qpos_index": 15,
+      "name": "left_arm_joint_4",
+      "type": "hinge",
+      "range": [
+        -2.5307,
+        1.0472
+      ]
+    },
+    {
+      "qpos_index": 16,
+      "name": "left_arm_joint_5",
+      "type": "hinge",
+      "range": [
+        -3.1067,
+        3.1067
+      ]
+    },
+    {
+      "qpos_index": 17,
+      "name": "left_arm_joint_6",
+      "type": "hinge",
+      "range": [
+        -1.0472,
+        1.0472
+      ]
+    },
+    {
+      "qpos_index": 18,
+      "name": "left_arm_joint_7",
+      "type": "hinge",
+      "range": [
+        -1.5708,
+        1.5708
+      ]
+    },
+    {
+      "qpos_index": 19,
+      "name": "leftfinger1_joint",
+      "type": "slide",
+      "range": [
+        0.0,
+        0.023
+      ]
+    },
+    {
+      "qpos_index": 20,
+      "name": "leftfinger2_joint",
+      "type": "slide",
+      "range": [
+        -0.023,
+        0.0
+      ]
+    },
+    {
+      "qpos_index": 21,
+      "name": "right_arm_joint_1",
+      "type": "hinge",
+      "range": [
+        -3.1067,
+        3.1067
+      ]
+    },
+    {
+      "qpos_index": 22,
+      "name": "right_arm_joint_2",
+      "type": "hinge",
+      "range": [
+        -2.0944,
+        2.0944
+      ]
+    },
+    {
+      "qpos_index": 23,
+      "name": "right_arm_joint_3",
+      "type": "hinge",
+      "range": [
+        -3.1067,
+        3.1067
+      ]
+    },
+    {
+      "qpos_index": 24,
+      "name": "right_arm_joint_4",
+      "type": "hinge",
+      "range": [
+        -2.5307,
+        1.0472
+      ]
+    },
+    {
+      "qpos_index": 25,
+      "name": "right_arm_joint_5",
+      "type": "hinge",
+      "range": [
+        -3.1067,
+        3.1067
+      ]
+    },
+    {
+      "qpos_index": 26,
+      "name": "right_arm_joint_6",
+      "type": "hinge",
+      "range": [
+        -1.0472,
+        1.0472
+      ]
+    },
+    {
+      "qpos_index": 27,
+      "name": "right_arm_joint_7",
+      "type": "hinge",
+      "range": [
+        -1.5708,
+        1.5708
+      ]
+    },
+    {
+      "qpos_index": 28,
+      "name": "rightfinger1_joint",
+      "type": "slide",
+      "range": [
+        0.0,
+        0.023
+      ]
+    },
+    {
+      "qpos_index": 29,
+      "name": "rightfinger2_joint",
+      "type": "slide",
+      "range": [
+        -0.023,
+        0.0
+      ]
+    },
+    {
+      "qpos_index": 30,
+      "name": "head_joint_1",
+      "type": "hinge",
+      "range": [
+        -1.5708,
+        1.5708
+      ]
+    },
+    {
+      "qpos_index": 31,
+      "name": "head_joint_2",
+      "type": "hinge",
+      "range": [
+        -0.3491,
+        0.6981
+      ]
+    }
+  ]
+}

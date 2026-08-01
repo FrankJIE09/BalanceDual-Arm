@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+MUJOCO_LOG.TXT
+screenshots/
+*.swp
+.DS_Store
+scene_dual_arm_plate copy*.xml
