@@ -141,8 +141,11 @@
     <body name="plate" pos="0.35 0 0.98">
       <freejoint name="plate_freejoint"/>
       <!-- 平板主体：半尺寸 0.21×0.12，旋转90°后长边沿Y(±0.21)，短边沿X -->
-      <geom type="box" size="0.21 0.12 0.008" 
-            rgba="0.82 0.55 0.15 1" name="plate_geom"/>
+      <!-- mass 显式给定：默认识别密度约1.6kg，夹持摩擦托举需足够法向力 -->
+      <geom type="box" size="0.21 0.12 0.008" mass="0.80"
+            rgba="0.82 0.55 0.15 1" name="plate_geom"
+            friction="5 0.1 0.01" condim="4"
+            solref="0.004 1" solimp="0.95 0.99 0.001 0.5 2"/>
       <!-- 方向标记 -->
       <geom type="box" pos="0.19 0 0" size="0.012 0.02 0.005" rgba="0 1 0 1" contype="0" conaffinity="0"/>
       <geom type="box" pos="0 0.10 0" size="0.03 0.01 0.005"  rgba="0 0 1 1" contype="0" conaffinity="0"/>
@@ -338,12 +341,18 @@
                           <body name="leftfinger1_Link" pos="0.0265722 -0.225489 -0.0132756" quat="0.000563312 0.000562864 0.707388 -0.706825">
                             <inertial pos="-0.00292894 -0.0122399 0.0387093" quat="0.959608 0.027899 0.00720119 -0.279861" mass="0.0246617" diaginertia="1.85854e-05 1.81975e-05 1.6148e-06"/>
                             <joint name="leftfinger1_joint" type="slide" axis="1 0 0" range="0 0.023"/>
-                            <geom type="mesh" rgba="0.894118 0.894118 0.894118 1" mesh="leftfinger1_Link"/>
+                            <geom type="mesh" rgba="0.894118 0.894118 0.894118 1" mesh="leftfinger1_Link" contype="0" conaffinity="0" group="1"/>
+                            <geom name="leftfinger1_pad" type="box" size="0.006 0.018 0.028" pos="0 0 0.02"
+                                  rgba="1 0.25 0.2 0.4" friction="5 0.1 0.01" condim="4"
+                                  solref="0.003 1" solimp="0.96 0.99 0.001 0.5 2"/>
                           </body>
                           <body name="leftfinger2_Link" pos="-0.0265718 -0.22551 0.0130678" quat="0.000563312 0.000562864 0.707388 -0.706825">
                             <inertial pos="0.00292894 0.0122399 0.0387093" quat="0.959608 -0.027899 -0.00720119 -0.279861" mass="0.0246617" diaginertia="1.85854e-05 1.81975e-05 1.6148e-06"/>
                             <joint name="leftfinger2_joint" type="slide" axis="1 0 0" range="-0.023 0"/>
-                            <geom type="mesh" rgba="0.894118 0.894118 0.894118 1" mesh="leftfinger2_Link"/>
+                            <geom type="mesh" rgba="0.894118 0.894118 0.894118 1" mesh="leftfinger2_Link" contype="0" conaffinity="0" group="1"/>
+                            <geom name="leftfinger2_pad" type="box" size="0.006 0.018 0.028" pos="0 0 0.02"
+                                  rgba="1 0.25 0.2 0.4" friction="5 0.1 0.01" condim="4"
+                                  solref="0.003 1" solimp="0.96 0.99 0.001 0.5 2"/>
                           </body>
                         </body>
                       </body>
@@ -388,12 +397,18 @@
                           <body name="rightfinger1_Link" pos="0.0265722 -0.225489 -0.0132756" quat="0.000563312 0.000562864 0.707388 -0.706825">
                             <inertial pos="-0.00292894 -0.0122399 0.0387093" quat="0.959608 0.027899 0.00720119 -0.279861" mass="0.0246617" diaginertia="1.85854e-05 1.81975e-05 1.6148e-06"/>
                             <joint name="rightfinger1_joint" type="slide" axis="1 0 0" range="0 0.023"/>
-                            <geom type="mesh" rgba="0.894118 0.894118 0.894118 1" mesh="rightfinger1_Link"/>
+                            <geom type="mesh" rgba="0.894118 0.894118 0.894118 1" mesh="rightfinger1_Link" contype="0" conaffinity="0" group="1"/>
+                            <geom name="rightfinger1_pad" type="box" size="0.006 0.018 0.028" pos="0 0 0.02"
+                                  rgba="1 0.25 0.2 0.4" friction="5 0.1 0.01" condim="4"
+                                  solref="0.003 1" solimp="0.96 0.99 0.001 0.5 2"/>
                           </body>
                           <body name="rightfinger2_Link" pos="-0.0265718 -0.22551 0.0130678" quat="0.000563312 0.000562864 0.707388 -0.706825">
                             <inertial pos="0.00292894 0.0122399 0.0387093" quat="0.959608 -0.027899 -0.00720119 -0.279861" mass="0.0246617" diaginertia="1.85854e-05 1.81975e-05 1.6148e-06"/>
                             <joint name="rightfinger2_joint" type="slide" axis="1 0 0" range="-0.023 0"/>
-                            <geom type="mesh" rgba="0.894118 0.894118 0.894118 1" mesh="rightfinger2_Link"/>
+                            <geom type="mesh" rgba="0.894118 0.894118 0.894118 1" mesh="rightfinger2_Link" contype="0" conaffinity="0" group="1"/>
+                            <geom name="rightfinger2_pad" type="box" size="0.006 0.018 0.028" pos="0 0 0.02"
+                                  rgba="1 0.25 0.2 0.4" friction="5 0.1 0.01" condim="4"
+                                  solref="0.003 1" solimp="0.96 0.99 0.001 0.5 2"/>
                           </body>
                         </body>
                       </body>
@@ -501,7 +516,7 @@
     <motor name="LA7_act" joint="left_arm_joint_7"  gear="1" ctrlrange="-18 18"/>
 
     <!-- 左手指 (ACT 19) -->
-    <motor name="LF1_act" joint="leftfinger1_joint"  gear="1" ctrlrange="-50 50"/>
+    <motor name="LF1_act" joint="leftfinger1_joint"  gear="1" ctrlrange="-120 120"/>
 
     <!-- 右臂 (ACT 20-26) ★ 控制目标 -->
     <motor name="RA1_act" joint="right_arm_joint_1" gear="1" ctrlrange="-108 108"/>
@@ -513,7 +528,7 @@
     <motor name="RA7_act" joint="right_arm_joint_7" gear="1" ctrlrange="-18 18"/>
 
     <!-- 右手指 (ACT 27) -->
-    <motor name="RF1_act" joint="rightfinger1_joint" gear="1" ctrlrange="-50 50"/>
+    <motor name="RF1_act" joint="rightfinger1_joint" gear="1" ctrlrange="-120 120"/>
 
     <!-- 头部 (ACT 28-29) -->
     <motor name="H1_act" joint="head_joint_1"  gear="1" ctrlrange="-6.6 6.6"/>

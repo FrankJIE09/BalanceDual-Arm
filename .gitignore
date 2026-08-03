@@ -6,6 +6,7 @@ venv/
 .env
 MUJOCO_LOG.TXT
 screenshots/
+logs/
 *.swp
 .DS_Store
 scene_dual_arm_plate copy*.xml
