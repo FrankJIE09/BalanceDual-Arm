@@ -7,19 +7,19 @@
 项目：BalanceDual-Arm
 
 模式：
-  HOLD  — 锁定初始关节角，重力补偿 + PD；夹爪夹持平板（无 weld）
-  CARRY — 夹爪夹持 + 双臂速度前馈沿 +X 慢移（无 mocap 硬焊）
+  HOLD  — 锁定初始关节角，重力补偿 + PD
+  CARRY — mocap+weld 驱动平板沿 +X 慢移，双臂速度前馈跟踪
 
 控制链路（CARRY）：
   平板期望速度 → TCP 旋量 → DLS 伪逆 → 积分限位
   → τ = g(q) + Kp·e + Kd·ė → data.ctrl
 
 运行：
-  python dual_arm_controller.py --gui           # 推荐：有界面
-  python dual_arm_controller.py --hold --gui
-  python dual_arm_controller.py                 # 无界面 CARRY + CSV
+  python dual_arm_controller.py                 # 默认 CARRY + CSV
+  python dual_arm_controller.py --hold --duration 3
+  python dual_arm_controller.py --gui
 
-版本：v1.3
+版本：v1.2
 日期：2026-08-08
 """
 
@@ -70,6 +70,9 @@ class CsvLogger:
         'ball_ox', 'ball_oy', 'ball_oz',
         'cup_x', 'cup_y', 'cup_z',
         'grip_contacts', 'ncon',
+        'q_fL1', 'q_fL2', 'q_fR1', 'q_fR2',
+        'tau_fL', 'tau_fR', 'e_fL', 'e_fR',
+        'cf_fL', 'cf_fR',
         'tcp_Lx', 'tcp_Ly', 'tcp_Lz',
         'tcp_Rx', 'tcp_Ry', 'tcp_Rz',
         'qL1', 'qL2', 'qL3', 'qL4', 'qL5', 'qL6', 'qL7',
@@ -119,6 +122,7 @@ class CsvLogger:
         tcpR = data.xpos[ctrl.tcp_right_id]
         dq_left = np.zeros(7) if dq_left is None else dq_left
         dq_right = np.zeros(7) if dq_right is None else dq_right
+        fd = ctrl.get_finger_debug()
         row = [
             float(data.time),
             float(np.degrees(roll)), float(np.degrees(pitch)),
@@ -130,7 +134,10 @@ class CsvLogger:
             float(np.degrees(plate_yaw)), float(level_err),
             float(ball[0] - plate[0]), float(ball[1] - plate[1]), float(ball[2] - plate[2]),
             float(cup[0]), float(cup[1]), float(cup[2]),
-            int(ctrl._count_finger_plate_contacts()), int(data.ncon),
+            int(fd['n_contact']), int(data.ncon),
+            float(fd['q_L1']), float(fd['q_L2']), float(fd['q_R1']), float(fd['q_R2']),
+            float(fd['tau_L']), float(fd['tau_R']), float(fd['e_L']), float(fd['e_R']),
+            float(fd['cf_L']), float(fd['cf_R']),
             float(tcpL[0]), float(tcpL[1]), float(tcpL[2]),
             float(tcpR[0]), float(tcpR[1]), float(tcpR[2]),
             *map(float, qL), *map(float, qR),
@@ -182,32 +189,38 @@ def summarize_csv(path):
     print(f"  plate_x: {col('plate_x')[0]:.3f} → {col('plate_x')[-1]:.3f} "
           f"(Δ={col('plate_x')[-1]-col('plate_x')[0]:.3f}m)")
     print(f"  grip_contacts: min={col('grip_contacts').min():.0f}  "
-          f"mean={col('grip_contacts').mean():.1f}")
+          f"mean={col('grip_contacts').mean():.1f}  (仅观测，mocap-weld 不依赖摩擦)")
     print(f"  |pitch|: max={np.abs(col('pitch_deg')).max():.2f}°")
     ball_r = np.sqrt(col('ball_ox')**2 + col('ball_oy')**2)
     print(f"  ball_radial: max={ball_r.max()*1000:.1f}mm  final={ball_r[-1]*1000:.1f}mm  (仅观测)")
+    if 'tau_fL' in rows[0]:
+        print(f"  finger τ: L=[{col('tau_fL').min():+.1f},{col('tau_fL').max():+.1f}]N  "
+              f"R=[{col('tau_fR').min():+.1f},{col('tau_fR').max():+.1f}]N")
+        print(f"  finger q1: L=[{col('q_fL1').min()*1000:.1f},{col('q_fL1').max()*1000:.1f}]mm  "
+              f"R=[{col('q_fR1').min()*1000:.1f},{col('q_fR1').max()*1000:.1f}]mm")
+        print(f"  finger e:  Lmax={abs(col('e_fL')).max()*1000:.1f}mm  "
+              f"Rmax={abs(col('e_fR')).max()*1000:.1f}mm")
+        print(f"  finger cf: Lmax={col('cf_fL').max():.1f}N  Rmax={col('cf_fR').max():.1f}N")
     print(f"  ‖τ_L‖ max={col('tau_L_norm').max():.1f}  ‖τ_R‖ max={col('tau_R_norm').max():.1f}")
     print(f"  ‖dq_cmd_L‖ max={col('dq_cmd_L_norm').max():.3f}  "
           f"‖dq_cmd_R‖ max={col('dq_cmd_R_norm').max():.3f}")
     if 'tcp_err_L' in rows[0]:
         print(f"  tcp_err: Lmax={col('tcp_err_L').max()*1000:.1f}mm  "
               f"Rmax={col('tcp_err_R').max()*1000:.1f}mm")
-    # 夹爪夹持：握持接触与板跟踪均参与判据
+    # mocap-weld：判据看板跟踪与躯干稳定，不看摩擦握持/小球驻留
     issues = []
-    if col('grip_contacts').min() < 2 and (col('grip_contacts') < 2).mean() > 0.05:
-        issues.append("握持接触丢失(grip_contacts<2 超过5%样本)")
-    if col('level_err_deg').max() > 15.0:
-        issues.append("平板倾角过大(>15°)")
-    if col('plate_err_xy').max() > 0.08:
-        issues.append("平板水平跟踪误差>80mm")
-    if np.abs(col('pitch_deg')).max() > 10.0:
-        issues.append("躯干pitch过大(>10°)")
-    if 'tcp_err_L' in rows[0] and max(col('tcp_err_L').max(), col('tcp_err_R').max()) > 0.10:
-        issues.append("TCP跟踪误差>100mm")
+    if col('level_err_deg').max() > 5.0:
+        issues.append("平板倾角过大(>5°)")
+    if col('plate_err_xy').max() > 0.05:
+        issues.append("平板水平跟踪误差>50mm")
+    if np.abs(col('pitch_deg')).max() > 8.0:
+        issues.append("躯干pitch过大(>8°)")
+    if 'tcp_err_L' in rows[0] and max(col('tcp_err_L').max(), col('tcp_err_R').max()) > 0.08:
+        issues.append("TCP跟踪误差>80mm")
     if 'plate_z' in rows[0] and col('plate_z').min() < 0.85:
         issues.append("平板掉落(z<0.85)")
-    if 'plate_err_z' in rows[0] and abs(col('plate_err_z')).max() > 0.10:
-        issues.append("平板高度误差>100mm")
+    if 'plate_err_z' in rows[0] and abs(col('plate_err_z')).max() > 0.08:
+        issues.append("平板高度误差>80mm")
     dx = float(col('plate_x')[-1] - col('plate_x')[0])
     dx_des = float(col('plate_des_x')[-1] - col('plate_des_x')[0]) if 'plate_des_x' in rows[0] else dx
     if dx_des > 0.015 and dx < 0.5 * dx_des:
@@ -246,9 +259,9 @@ class DualArmPlateController:
         self.dls_lambda = 0.05
         self.carry_mode = not bool(getattr(args, 'hold', False))
         self.hold_mode = not self.carry_mode
-        self.finger_grip = 0.012
+        self.finger_grip = 0.0
 
-        # 搬运轨迹：期望板心沿 +X（夹爪拖动，无 weld）
+        # 搬运轨迹：mocap+weld 驱动平板沿 +X
         self.carry_hold_s = float(getattr(args, 'carry_hold', 0.5))
         self.carry_move_s = float(getattr(args, 'carry_move', 6.0))
         self.carry_distance = float(getattr(args, 'carry_dist', 0.06))
@@ -268,8 +281,10 @@ class DualArmPlateController:
         self.kd_trunk = 60.0
         self.kp_head = 40.0
         self.kd_head = 4.0
-        self.kp_finger = 300.0
-        self.kd_finger = 12.0
+        self.kp_finger = 400.0
+        self.kd_finger = 10.0
+        # 持续夹紧力偏置(N)：实测正 τ 使 finger1 张开，故负值=合拢
+        self.finger_close_bias = 50.0
         self.kp_tcp_pos = 6.0
         self.kp_tcp_rot = 4.0
 
@@ -298,6 +313,16 @@ class DualArmPlateController:
         self.csv_logger = None
         self._last_dq_left = np.zeros(7)
         self._last_dq_right = np.zeros(7)
+
+        # 手指诊断缓存（write_torque_ctrl 写入）
+        self._finger_dbg = {
+            'tau_L': 0.0, 'tau_R': 0.0,
+            'tau_raw_L': 0.0, 'tau_raw_R': 0.0,
+            'e_L': 0.0, 'e_R': 0.0,
+            'g_L': 0.0, 'g_R': 0.0,
+            'bias_L': 0.0, 'bias_R': 0.0,
+            'clipped_L': False, 'clipped_R': False,
+        }
 
         # ---- 日志 ----
         self.log_interval = max(1, int(0.5 / self.dt))
@@ -602,13 +627,24 @@ class DualArmPlateController:
             kp, kd = self._hold_kp_kd(act_id)
             set_ctrl(act_id, g[dof] + kp * e + kd * de)
 
-        for act_id in (ACT_LEFT_FINGER, ACT_RIGHT_FINGER):
+        for act_id, side in ((ACT_LEFT_FINGER, 'L'), (ACT_RIGHT_FINGER, 'R')):
             dof = int(self.act_dofadr[act_id])
             jid = int(self.act_jnt_ids[act_id])
             qadr = model.jnt_qposadr[jid]
             e = self.finger_grip - data.qpos[qadr]
             de = 0.0 - data.qvel[dof]
-            set_ctrl(act_id, g[dof] + self.kp_finger * e + self.kd_finger * de)
+            g_f = float(g[dof])
+            bias = float(self.finger_close_bias)
+            tau_raw = (g_f + self.kp_finger * e + self.kd_finger * de + bias)
+            lo, hi = model.actuator_ctrlrange[act_id]
+            tau_cmd = float(np.clip(tau_raw, lo, hi))
+            data.ctrl[act_id] = tau_cmd
+            self._finger_dbg[f'tau_{side}'] = tau_cmd
+            self._finger_dbg[f'tau_raw_{side}'] = float(tau_raw)
+            self._finger_dbg[f'e_{side}'] = float(e)
+            self._finger_dbg[f'g_{side}'] = g_f
+            self._finger_dbg[f'bias_{side}'] = bias
+            self._finger_dbg[f'clipped_{side}'] = bool(tau_raw < lo or tau_raw > hi)
 
     def lock_hold_targets(self):
         """初始化完成后，锁定全部关节当前角度作为保持目标"""
@@ -674,28 +710,14 @@ class DualArmPlateController:
             if bname == 'plate' or 'pad' in gname or 'finger' in bname:
                 if model.geom_contype[gid] == 0 and model.geom_conaffinity[gid] == 0:
                     continue
-                model.geom_friction[gid] = [8.0, 0.2, 0.02]
+                model.geom_friction[gid] = [5.0, 0.1, 0.01]
                 model.geom_solref[gid] = [0.003, 1.0]
                 model.geom_condim[gid] = 4
         print(f"[Collision] 关闭 {n_off} 个机器人网格；保留手爪↔板接触")
 
-    def _disable_plate_mocap_weld(self):
-        """确保平板不被 mocap 焊接（夹爪夹持模式）。"""
-        eq_id = mujoco.mj_name2id(
-            self.model, mujoco.mjtObj.mjOBJ_EQUALITY, "plate_mocap_weld")
-        if eq_id < 0:
-            print("[Grasp] plate_mocap_weld 未定义（已取消硬焊）")
-            return
-        if hasattr(self.data, "eq_active"):
-            self.data.eq_active[eq_id] = 0
-        if hasattr(self.model, "eq_active0"):
-            self.model.eq_active0[eq_id] = 0
-        print("[Grasp] 已禁用 plate_mocap_weld，改用夹爪夹持")
-
     def _prepare_hold_scene(self):
-        """板 Rz90，手指夹紧，记录夹持相对位姿（无 mocap 硬焊）"""
+        """板 Rz90 + mocap，手指夹紧，记录夹持相对位姿"""
         model, data = self.model, self.data
-        self._disable_plate_mocap_weld()
 
         self.scene_free_qpos = {}
         for name in ("plate", "cup", "water_mass", "ball"):
@@ -707,7 +729,7 @@ class DualArmPlateController:
             self.scene_free_qpos[name] = (qadr, data.qpos[qadr:qadr + 7].copy())
 
         self.plate_hold_yaw = np.pi / 2
-        # 仅摆初始姿态；之后靠夹爪，不驱动 mocap 焊
+        self._set_plate_mocap_yaw(self.plate_hold_yaw)
         if "plate" in self.scene_free_qpos:
             qadr, q7 = self.scene_free_qpos["plate"]
             q7 = q7.copy()
@@ -742,6 +764,11 @@ class DualArmPlateController:
         print(f"[Hold] 板 Rz90°；手指夹紧；finger-plate 接触对={n_fp}")
         print(f"[Grasp] off_L={np.round(self.grasp_off_L, 3)}  "
               f"off_R={np.round(self.grasp_off_R, 3)}")
+        print(f"[Finger] q_des={self.finger_grip*1000:.1f}mm  "
+              f"Kp={self.kp_finger:.0f} Kd={self.kd_finger:.0f}  "
+              f"bias={self.finger_close_bias:.1f}N(合拢)  "
+              f"joint1 range=[0,23]mm  (slide, ctrl=力N)")
+        self._print_finger_debug('INIT-F')
 
     def _ik_q_des(self, tcp_body_id, joint_ids, joint_ranges, p_des, R_des,
                   q0, n_iter=6):
@@ -831,6 +858,112 @@ class DualArmPlateController:
                 n += 1
         return n
 
+    def _finger_qpos_pair(self, side):
+        """返回 (finger1_q, finger2_q, finger1_dq, jnt_range_f1)"""
+        model, data = self.model, self.data
+        prefix = 'left' if side == 'left' else 'right'
+        out = []
+        for suffix in ('finger1_joint', 'finger2_joint'):
+            jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f'{prefix}{suffix}')
+            qadr = int(model.jnt_qposadr[jid])
+            out.append(float(data.qpos[qadr]))
+        jid1 = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, f'{prefix}finger1_joint')
+        dq = float(data.qvel[int(model.jnt_dofadr[jid1])])
+        lo, hi = model.jnt_range[jid1]
+        return out[0], out[1], dq, float(lo), float(hi)
+
+    def _finger_plate_contact_force(self, side):
+        """手指-板接触法向力之和 (N)，按左右手分别统计"""
+        model, data = self.model, self.data
+        prefix = 'left' if side == 'left' else 'right'
+        finger_ids = set()
+        for name in (f'{prefix}finger1_Link', f'{prefix}finger2_Link'):
+            bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+            if bid >= 0:
+                finger_ids.add(bid)
+        force6 = np.zeros(6)
+        total = 0.0
+        for i in range(data.ncon):
+            c = data.contact[i]
+            b1 = int(model.geom_bodyid[c.geom1])
+            b2 = int(model.geom_bodyid[c.geom2])
+            if not ((b1 == self.plate_id and b2 in finger_ids) or
+                    (b2 == self.plate_id and b1 in finger_ids)):
+                continue
+            mujoco.mj_contactForce(model, data, i, force6)
+            total += abs(float(force6[0]))
+        return total
+
+    def get_finger_debug(self):
+        """汇总左右手指位置/力矩/接触，供打印与 CSV"""
+        q_L1, q_L2, dq_L, lo_L, hi_L = self._finger_qpos_pair('left')
+        q_R1, q_R2, dq_R, lo_R, hi_R = self._finger_qpos_pair('right')
+        # pad 世界坐标（便于看是否贴板）
+        pad_pos = {}
+        for name in ('leftfinger1_Link', 'leftfinger2_Link',
+                     'rightfinger1_Link', 'rightfinger2_Link'):
+            bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
+            pad_pos[name] = self.data.xpos[bid].copy() if bid >= 0 else np.zeros(3)
+        plate = self.data.xpos[self.plate_id]
+        return {
+            'q_des': float(self.finger_grip),
+            'kp': float(self.kp_finger), 'kd': float(self.kd_finger),
+            'bias': float(self.finger_close_bias),
+            'q_L1': q_L1, 'q_L2': q_L2, 'dq_L': dq_L, 'lo_L': lo_L, 'hi_L': hi_L,
+            'q_R1': q_R1, 'q_R2': q_R2, 'dq_R': dq_R, 'lo_R': lo_R, 'hi_R': hi_R,
+            'e_L': float(self._finger_dbg['e_L']),
+            'e_R': float(self._finger_dbg['e_R']),
+            'tau_L': float(self._finger_dbg['tau_L']),
+            'tau_R': float(self._finger_dbg['tau_R']),
+            'tau_raw_L': float(self._finger_dbg['tau_raw_L']),
+            'tau_raw_R': float(self._finger_dbg['tau_raw_R']),
+            'g_L': float(self._finger_dbg['g_L']),
+            'g_R': float(self._finger_dbg['g_R']),
+            'clipped_L': bool(self._finger_dbg['clipped_L']),
+            'clipped_R': bool(self._finger_dbg['clipped_R']),
+            'cf_L': self._finger_plate_contact_force('left'),
+            'cf_R': self._finger_plate_contact_force('right'),
+            'n_contact': self._count_finger_plate_contacts(),
+            'pad_pos': pad_pos,
+            'plate': plate.copy(),
+            'plate_z': float(plate[2]),
+        }
+
+    def _print_finger_debug(self, tag='FINGER'):
+        """周期打印手指力矩与位置，便于排查夹不住"""
+        d = self.get_finger_debug()
+        gap_L = abs(d['q_L1'] - d['q_L2'])  # 因镜像，约 2*|q1|
+        gap_R = abs(d['q_R1'] - d['q_R2'])
+        clip_L = 'CLIP' if d['clipped_L'] else 'ok'
+        clip_R = 'CLIP' if d['clipped_R'] else 'ok'
+        print(
+            f"[{tag} t={self.data.time:5.2f}s] "
+            f"q_des={d['q_des']*1000:.1f}mm  "
+            f"Kp={d['kp']:.0f} Kd={d['kd']:.0f} bias={d['bias']:+.1f}N | "
+            f"ncon_grip={d['n_contact']} plate_z={d['plate_z']:.3f}"
+        )
+        print(
+            f"  L: q1={d['q_L1']*1000:+6.1f}mm q2={d['q_L2']*1000:+6.1f}mm "
+            f"(range[{d['lo_L']*1000:.0f},{d['hi_L']*1000:.0f}]mm) "
+            f"e={d['e_L']*1000:+6.1f}mm dq={d['dq_L']:+.3f} "
+            f"τ={d['tau_L']:+7.2f}N (raw={d['tau_raw_L']:+.2f} g={d['g_L']:+.2f} {clip_L}) "
+            f"cf={d['cf_L']:.1f}N gap≈{gap_L*1000:.1f}mm"
+        )
+        print(
+            f"  R: q1={d['q_R1']*1000:+6.1f}mm q2={d['q_R2']*1000:+6.1f}mm "
+            f"(range[{d['lo_R']*1000:.0f},{d['hi_R']*1000:.0f}]mm) "
+            f"e={d['e_R']*1000:+6.1f}mm dq={d['dq_R']:+.3f} "
+            f"τ={d['tau_R']:+7.2f}N (raw={d['tau_raw_R']:+.2f} g={d['g_R']:+.2f} {clip_R}) "
+            f"cf={d['cf_R']:.1f}N gap≈{gap_R*1000:.1f}mm"
+        )
+        # 指尖相对板中心（世界系）
+        p = d['plate']
+        for name, key in (('L1', 'leftfinger1_Link'), ('L2', 'leftfinger2_Link'),
+                          ('R1', 'rightfinger1_Link'), ('R2', 'rightfinger2_Link')):
+            x = d['pad_pos'][key]
+            print(f"  pad_{name}=({x[0]:.3f},{x[1]:.3f},{x[2]:.3f}) "
+                  f"Δplate=({x[0]-p[0]:+.3f},{x[1]-p[1]:+.3f},{x[2]-p[2]:+.3f})")
+
     def _set_plate_mocap_yaw(self, yaw):
         """设置平板 mocap 位姿：水平 + 指定 yaw"""
         self.data.mocap_pos[self.mocap_idx] = self.plate_desired_pos
@@ -878,9 +1011,10 @@ class DualArmPlateController:
     # ==================================================================
 
     def control_step(self):
-        """每步仿真：HOLD 保持 或 CARRY 夹爪夹持 + 双臂跟踪"""
+        """每步仿真：HOLD 保持 或 CARRY 硬焊拖板 + 双臂跟踪"""
 
         if self.hold_mode:
+            self.update_plate_mocap(yaw=self.plate_hold_yaw)
             self.write_torque_ctrl(
                 self.q_des_left, np.zeros(7),
                 self.q_des_right, np.zeros(7))
@@ -901,9 +1035,10 @@ class DualArmPlateController:
                       f"pitch={np.degrees(pitch):+5.2f}° "
                       f"| ‖Δq_L‖={err_l:.4f} ‖Δq_R‖={err_r:.4f} "
                       f"grip={self._count_finger_plate_contacts()}")
+                self._print_finger_debug('HOLD-F')
             return
 
-        # === CARRY：夹爪夹持 + 手臂速度前馈（无 mocap 硬焊） ===
+        # === CARRY：mocap 硬焊拖板 + 手臂速度前馈 ===
         v_plate_des = self._update_carry_plate_target()
         w_plate_des = np.zeros(3)
         plate = self.data.xpos[self.plate_id]
@@ -941,6 +1076,7 @@ class DualArmPlateController:
 
         self.write_torque_ctrl(
             self.q_des_left, dq_left, self.q_des_right, dq_right)
+        self.update_plate_mocap(yaw=self.plate_hold_yaw)
 
         if self.csv_logger is not None:
             self.csv_logger.maybe_log(self, dq_left, dq_right, epos_L, epos_R)
@@ -956,6 +1092,7 @@ class DualArmPlateController:
                   f"plate=({plate[0]:.3f},{plate[1]:.3f},{plate[2]:.3f}) "
                   f"des_x={self.plate_desired_pos[0]:.3f} "
                   f"eTCP=({epos_L*1000:.1f}/{epos_R*1000:.1f}mm)")
+            self._print_finger_debug('CARRY-F')
 
 # =====================================================================
 # 仿真运行器
@@ -1103,7 +1240,7 @@ class SimulationRunner:
         self.controller = DualArmPlateController(self.model, self.data, self.args)
         self.controller.plate_desired_pos = np.array(
             [plate_center_x, plate_center_y, plate_surface_z])
-        self.controller.finger_grip = 0.010
+        self.controller.finger_grip = 0.008  # ~板厚对应半开合，偏置再往里夹
         self.controller.lock_hold_targets()
 
         mode = "HOLD" if self.controller.hold_mode else "CARRY"
@@ -1367,13 +1504,13 @@ class SimulationRunner:
 def parse_args():
     """命令行参数解析"""
     parser = argparse.ArgumentParser(
-        description="双臂协同稳载仿真：HOLD / CARRY（夹爪夹持，无 mocap 硬焊）",
+        description="双臂协同稳载仿真：HOLD / CARRY（mocap 硬焊拖板）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python dual_arm_controller.py --gui                 # 有界面 CARRY（推荐）
-  python dual_arm_controller.py --hold --gui
-  python dual_arm_controller.py --duration 8          # 无界面
+  python dual_arm_controller.py --duration 8          # 默认 CARRY
+  python dual_arm_controller.py --hold --duration 3
+  python dual_arm_controller.py --gui
         """)
 
     parser.add_argument('--gui', action='store_true',
@@ -1421,7 +1558,7 @@ def main():
     mode = 'HOLD' if args.hold else 'CARRY'
     print("=" * 60)
     print("  轮式移动双臂机器人协同稳载仿真系统")
-    print("  BalanceDual-Arm v1.3")
+    print("  BalanceDual-Arm v1.2")
     print("=" * 60)
     print(f"  MJCF:    {xml_path}")
     print(f"  GUI:     {args.gui}")
@@ -1430,7 +1567,7 @@ def main():
     print(f"  CSV:     {args.csv}")
     if mode == 'CARRY':
         print(f"  Carry:   hold={args.carry_hold}s move={args.carry_move}s "
-              f"dist={args.carry_dist}m  [grip-only]")
+              f"dist={args.carry_dist}m  [mocap-weld]")
     print("=" * 60)
 
     runner = SimulationRunner(xml_path, args)
