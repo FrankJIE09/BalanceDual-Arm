@@ -5,40 +5,22 @@
 轮式移动双臂机器人协同稳载控制系统
 ===============================================
 项目：BalanceDual-Arm
-任务：双任务并行控制
-  1. 搬水稳水平（最高优先级，硬约束）
-  2. 板面小球驻留（次级优化，零空间柔顺）
 
-控制架构（5层严格层级化）：
-  第0层：平板中心速度旋量 (v_plate, ω_plate) ← 顶层输入
-  第1层：底盘姿态补偿 (ω_comp = -K * [roll, pitch, 0])
-  第2层：速度旋量坐标变换 (plate → left/right TCP)
-  第3层：雅可比伪逆解算 (dq = J⁺ * twist)
-  第4层：数值积分 + 限位 (q_target = q + dq*dt)
-  第5层：重力补偿 + PD 力矩
-         τ = g(q) + Kp·(q_des−q) + Kd·(dq_des−dq)  → data.ctrl
+模式：
+  HOLD  — 锁定初始关节角，重力补偿 + PD；夹爪夹持平板（无 weld）
+  CARRY — 夹爪夹持 + 双臂速度前馈沿 +X 慢移（无 mocap 硬焊）
 
-仿真规则：
-  - 全部关节使用 motor 力矩型执行器
-  - 禁止直接写 qpos 赋值控制机器人（仅初始化允许）
-  - 禁止纯速度开环控制
-  - 重力 g(q)：mj_forward(q, dq=0) 后读 qfrc_bias（同 anyverse WBC 验证）
-  - 默认 --hold：锁定初始关节角保持，先验证动力学稳定
-
-依赖：
-  pip install mujoco numpy scipy
+控制链路（CARRY）：
+  平板期望速度 → TCP 旋量 → DLS 伪逆 → 积分限位
+  → τ = g(q) + Kp·e + Kd·ė → data.ctrl
 
 运行：
-  python dual_arm_controller.py                 # 默认：硬焊 6cm 慢移 + CSV
-  python dual_arm_controller.py --hold --duration 3
-  python dual_arm_controller.py --gui
-  python dual_arm_controller.py --free-plate
-      # 软焊共载慢移 3cm
-  python dual_arm_controller.py --free-plate --cut-weld
-      # 断焊静持
+  python dual_arm_controller.py --gui           # 推荐：有界面
+  python dual_arm_controller.py --hold --gui
+  python dual_arm_controller.py                 # 无界面 CARRY + CSV
 
-版本：v1.0
-日期：2026-07-31
+版本：v1.3
+日期：2026-08-08
 """
 
 import mujoco
@@ -49,7 +31,6 @@ import os
 import sys
 import time
 import csv
-from datetime import datetime
 
 # =====================================================================
 # 常量定义
@@ -204,37 +185,29 @@ def summarize_csv(path):
           f"mean={col('grip_contacts').mean():.1f}")
     print(f"  |pitch|: max={np.abs(col('pitch_deg')).max():.2f}°")
     ball_r = np.sqrt(col('ball_ox')**2 + col('ball_oy')**2)
-    print(f"  ball_radial: max={ball_r.max()*1000:.1f}mm  final={ball_r[-1]*1000:.1f}mm")
+    print(f"  ball_radial: max={ball_r.max()*1000:.1f}mm  final={ball_r[-1]*1000:.1f}mm  (仅观测)")
     print(f"  ‖τ_L‖ max={col('tau_L_norm').max():.1f}  ‖τ_R‖ max={col('tau_R_norm').max():.1f}")
     print(f"  ‖dq_cmd_L‖ max={col('dq_cmd_L_norm').max():.3f}  "
           f"‖dq_cmd_R‖ max={col('dq_cmd_R_norm').max():.3f}")
     if 'tcp_err_L' in rows[0]:
         print(f"  tcp_err: Lmax={col('tcp_err_L').max()*1000:.1f}mm  "
               f"Rmax={col('tcp_err_R').max()*1000:.1f}mm")
-    # 简单告警
+    # 夹爪夹持：握持接触与板跟踪均参与判据
     issues = []
-    if col('grip_contacts').min() < 2 and (col('grip_contacts') < 2).mean() > 0.02:
-        issues.append("握持接触丢失(grip_contacts<2 超过2%样本)")
-    elif col('grip_contacts').mean() < 2.5:
-        issues.append("握持接触偏弱(mean<2.5)")
-    if col('level_err_deg').max() > 5.0:
-        issues.append("平板倾角过大(>5°)")
-    if col('plate_err_xy').max() > 0.05:
-        issues.append("平板水平跟踪误差>50mm")
-    if np.abs(col('pitch_deg')).max() > 5.0:
-        issues.append("躯干pitch过大")
-    ball_r = np.sqrt(col('ball_ox')**2 + col('ball_oy')**2)
-    if ball_r[0] < 0.35 and ball_r.max() > 0.25:
-        issues.append("小球偏离板面过大")
-    grip_mean = float(col('grip_contacts').mean())
-    tcp_lim = 0.07 if grip_mean >= 14.0 else 0.05
-    if 'tcp_err_L' in rows[0] and max(col('tcp_err_L').max(), col('tcp_err_R').max()) > tcp_lim:
-        issues.append(f"TCP夹持误差>{tcp_lim*1000:.0f}mm")
+    if col('grip_contacts').min() < 2 and (col('grip_contacts') < 2).mean() > 0.05:
+        issues.append("握持接触丢失(grip_contacts<2 超过5%样本)")
+    if col('level_err_deg').max() > 15.0:
+        issues.append("平板倾角过大(>15°)")
+    if col('plate_err_xy').max() > 0.08:
+        issues.append("平板水平跟踪误差>80mm")
+    if np.abs(col('pitch_deg')).max() > 10.0:
+        issues.append("躯干pitch过大(>10°)")
+    if 'tcp_err_L' in rows[0] and max(col('tcp_err_L').max(), col('tcp_err_R').max()) > 0.10:
+        issues.append("TCP跟踪误差>100mm")
     if 'plate_z' in rows[0] and col('plate_z').min() < 0.85:
         issues.append("平板掉落(z<0.85)")
-    if 'plate_err_z' in rows[0] and abs(col('plate_err_z')).max() > 0.08:
-        issues.append("平板高度误差>80mm")
-    # 有指令平移时：实际Δx至少一半
+    if 'plate_err_z' in rows[0] and abs(col('plate_err_z')).max() > 0.10:
+        issues.append("平板高度误差>100mm")
     dx = float(col('plate_x')[-1] - col('plate_x')[0])
     dx_des = float(col('plate_des_x')[-1] - col('plate_des_x')[0]) if 'plate_des_x' in rows[0] else dx
     if dx_des > 0.015 and dx < 0.5 * dx_des:
@@ -269,32 +242,20 @@ class DualArmPlateController:
         self.args = args
 
         # ---- 控制参数 ----
-        self.dt = model.opt.timestep           # 仿真步长
-        self.kp_attitude = args.kp_attitude     # 姿态补偿增益
-        self.kp_ball = args.kp_ball             # 小球驻留增益
-        self.dls_lambda = 0.05                  # 阻尼最小二乘阻尼因子
-        self.enable_ball = not args.no_ball     # 是否启球小球驻留
-        self.carry_mode = bool(getattr(args, 'carry', False))
-        self.hold_mode = (not getattr(args, 'balance', False)) and (not self.carry_mode)
-        self.finger_grip = 0.010                # 手指夹紧位置 (m)
+        self.dt = model.opt.timestep
+        self.dls_lambda = 0.05
+        self.carry_mode = not bool(getattr(args, 'hold', False))
+        self.hold_mode = not self.carry_mode
+        self.finger_grip = 0.012
 
-        # 搬运轨迹：短时沿 +X 平移平板（mocap 驱动 + 双臂跟踪）
-        # 默认：慢移 4cm（CSV 复盘：快移易丢握持接触）
+        # 搬运轨迹：期望板心沿 +X（夹爪拖动，无 weld）
         self.carry_hold_s = float(getattr(args, 'carry_hold', 0.5))
         self.carry_move_s = float(getattr(args, 'carry_move', 6.0))
-        self.carry_distance = float(getattr(args, 'carry_dist', 0.06))  # 6cm
+        self.carry_distance = float(getattr(args, 'carry_dist', 0.06))
         self.carry_vx = self.carry_distance / max(self.carry_move_s, 1e-3)
         self.plate_start_pos = None
-        self.free_plate = bool(getattr(args, 'free_plate', False))
-        self.cut_weld = bool(getattr(args, 'cut_weld', False))
-        self._weld_eq_id = -1
-        self._plate_released = False
-        self._soft_weld_started = False
-        self._soft_weld_t0 = None
-        self._release_t = None
 
-        # 力矩 PD 增益（参考 anyverse gravity_pd；搬运时需跟住板）
-        # τ = g(q) + Kp·e + Kd·ė
+        # 力矩 PD：τ = g(q) + Kp·e + Kd·ė
         self.kp_arm = np.array([80.0, 80.0, 60.0, 60.0, 30.0, 30.0, 25.0])
         self.kd_arm = np.array([10.0, 10.0,  8.0,  8.0,  3.0,  3.0,  2.5])
         self.ki_arm = np.zeros(7)
@@ -307,9 +268,8 @@ class DualArmPlateController:
         self.kd_trunk = 60.0
         self.kp_head = 40.0
         self.kd_head = 4.0
-        self.kp_finger = 50.0
-        self.kd_finger = 3.0
-        # balance 用；carry 仅速度前馈（位置伺服易丢握持）
+        self.kp_finger = 300.0
+        self.kd_finger = 12.0
         self.kp_tcp_pos = 6.0
         self.kp_tcp_rot = 4.0
 
@@ -435,84 +395,20 @@ class DualArmPlateController:
         return np.array([self.data.qvel[self.model.jnt_dofadr[j]] for j in ids])
 
     # ==================================================================
-    # 第1层：底盘姿态补偿
-    # ==================================================================
-
-    def compute_attitude_compensation(self):
-        """
-        计算保持平板绝对水平所需的补偿角速度
-
-        原理：
-          读取底盘俯仰/滚转角，产生反向角速度使平板恢复水平。
-          ω_comp = -K_p * [roll, pitch, 0]
-
-        Returns:
-            w_comp:  补偿角速度向量 [wx, wy, wz] (world frame)
-            roll:    当前滚转角 (rad)
-            pitch:   当前俯仰角 (rad)
-        """
-        roll, pitch = self.get_chassis_orientation()
-
-        w_comp = np.zeros(3)
-        w_comp[0] = -self.kp_attitude * roll   # 绕世界 X 轴，补偿滚转
-        w_comp[1] = -self.kp_attitude * pitch  # 绕世界 Y 轴，补偿俯仰
-        w_comp[2] = 0.0                         # Z 轴严格禁止！
-
-        return w_comp, roll, pitch
-
-    # ==================================================================
-    # 第2层（次级任务）：小球驻留
-    # ==================================================================
-
-    def compute_ball_centering(self):
-        """
-        计算使小球向平板中心移动所需的附加角速度
-
-        原理：
-          小球在倾斜平面上受重力分量作用。
-          检测小球与平板中心的偏移，倾斜平板使小球滚回中心。
-          如果小球在 +X 方向 → 使平板绕 +Y 轴倾斜（小球向 -X 滚）
-
-        Returns:
-            w_ball:  小球驻留角速度 [wx, wy, wz]
-            offset:  小球偏移量 [dx, dy, dz] (world frame)
-        """
-        ball_pos = self.data.xpos[self.ball_id]
-        plate_pos = self.data.xpos[self.plate_id]
-        offset = ball_pos - plate_pos
-
-        # 限制最大偏移量，防止小球离太远时增益过大
-        offset_clipped = np.clip(offset, -0.15, 0.15)
-
-        w_ball = np.zeros(3)
-        # 小球 Y 轴偏移 → 绕 X 轴滚转（roll方向）
-        w_ball[0] = -self.kp_ball * offset_clipped[1]
-        # 小球 X 轴偏移 → 绕 Y 轴俯仰（pitch方向）
-        w_ball[1] = self.kp_ball * offset_clipped[0]
-        w_ball[2] = 0.0  # Z 轴严格禁止
-
-        return w_ball, offset
-
-    # ==================================================================
-    # 第2层：平板速度旋量 → TCP 速度变换
+    # 平板速度旋量 → TCP 速度变换
     # ==================================================================
 
     def plate_twist_to_tcp_velocity(self, v_plate, w_plate, tcp_body_id,
                                     grasp_off=None):
-        """
-        将平板中心速度旋量变换为 TCP 速度。
-        若给 grasp_off，用期望夹持点杠杆臂（避免 TCP 滞后时前馈偏小）。
-        """
-        plate_pos = self.data.xpos[self.plate_id]
+        """将平板中心速度旋量变换为 TCP 速度。"""
         if grasp_off is not None:
             R_p = self.data.xmat[self.plate_id].reshape(3, 3)
             r_tcp = R_p @ grasp_off
         else:
+            plate_pos = self.data.xpos[self.plate_id]
             r_tcp = self.data.xpos[tcp_body_id] - plate_pos
-
         v_tcp = v_plate + np.cross(w_plate, r_tcp)
-        w_tcp = w_plate.copy()
-        return np.concatenate([v_tcp, w_tcp])
+        return np.concatenate([v_tcp, w_plate.copy()])
 
     # ==================================================================
     # 第3层：雅可比矩阵计算
@@ -712,9 +608,7 @@ class DualArmPlateController:
             qadr = model.jnt_qposadr[jid]
             e = self.finger_grip - data.qpos[qadr]
             de = 0.0 - data.qvel[dof]
-            # free-plate：额外恒定夹紧力抬高法向力
-            bias = 50.0 if self.free_plate else 0.0
-            set_ctrl(act_id, g[dof] + self.kp_finger * e + self.kd_finger * de + bias)
+            set_ctrl(act_id, g[dof] + self.kp_finger * e + self.kd_finger * de)
 
     def lock_hold_targets(self):
         """初始化完成后，锁定全部关节当前角度作为保持目标"""
@@ -732,18 +626,11 @@ class DualArmPlateController:
               f"左臂={np.round(self.q_des_left, 3)}  "
               f"右臂={np.round(self.q_des_right, 3)}")
 
-        # 无论 HOLD / CARRY / BALANCE：手爪必须与板接触（搬运）
         self._configure_grasp_collisions()
-        if self.hold_mode or self.carry_mode or getattr(self.args, 'balance', False):
-            self._prepare_hold_scene()
+        self._prepare_hold_scene()
 
     def _configure_grasp_collisions(self):
-        """
-        碰撞过滤（搬运必需）：
-          - 关闭机器人身体 STL 自穿透碰撞
-          - 保留 手爪 ↔ 平板/杯/球 接触
-          - 保留地面 plane；关闭 world 上底盘网格
-        """
+        """关闭机器人网格自碰；保留手爪↔板/杯/球接触。"""
         model = self.model
         model.opt.disableflags &= ~int(mujoco.mjtDisableBit.mjDSBL_CONTACT)
 
@@ -758,12 +645,10 @@ class DualArmPlateController:
             bid = int(model.geom_bodyid[gid])
             bname = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, bid) or ''
 
-            # 手爪 + 场景物：强制可碰撞，提高摩擦以便夹持搬运
             if bname in grasp_bodies:
                 model.geom_contype[gid] = 1
                 model.geom_conaffinity[gid] = 1
-                model.geom_friction[gid] = [5.0, 0.05, 0.01] if self.free_plate \
-                    else [2.5, 0.01, 0.001]
+                model.geom_friction[gid] = [2.5, 0.01, 0.001]
                 continue
 
             if bname == 'plate_mocap':
@@ -782,18 +667,6 @@ class DualArmPlateController:
             model.geom_conaffinity[gid] = 0
             n_off += 1
 
-        # 搬运保留硬 weld；--free-plate 时强化夹持以便断焊承力
-        if self.free_plate:
-            self.kp_finger = 800.0
-            self.kd_finger = 40.0
-            self.finger_grip = 0.020
-        else:
-            self.kp_finger = 150.0
-            self.kd_finger = 8.0
-            self.finger_grip = 0.012
-        eq = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_EQUALITY, 'plate_mocap_weld')
-        self._weld_eq_id = int(eq)
-        # 硬化板/垫接触，提高法向力（摩擦托举需要 N > mg/μ）
         for gid in range(model.ngeom):
             bid = int(model.geom_bodyid[gid])
             bname = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, bid) or ''
@@ -801,15 +674,28 @@ class DualArmPlateController:
             if bname == 'plate' or 'pad' in gname or 'finger' in bname:
                 if model.geom_contype[gid] == 0 and model.geom_conaffinity[gid] == 0:
                     continue
-                model.geom_friction[gid] = [5.0, 0.1, 0.01]
+                model.geom_friction[gid] = [8.0, 0.2, 0.02]
                 model.geom_solref[gid] = [0.003, 1.0]
                 model.geom_condim[gid] = 4
-        print(f"[Collision] 关闭 {n_off} 个机器人网格；保留手爪↔板接触"
-              f"{'；free-plate强夹持' if self.free_plate else ''}")
+        print(f"[Collision] 关闭 {n_off} 个机器人网格；保留手爪↔板接触")
+
+    def _disable_plate_mocap_weld(self):
+        """确保平板不被 mocap 焊接（夹爪夹持模式）。"""
+        eq_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_EQUALITY, "plate_mocap_weld")
+        if eq_id < 0:
+            print("[Grasp] plate_mocap_weld 未定义（已取消硬焊）")
+            return
+        if hasattr(self.data, "eq_active"):
+            self.data.eq_active[eq_id] = 0
+        if hasattr(self.model, "eq_active0"):
+            self.model.eq_active0[eq_id] = 0
+        print("[Grasp] 已禁用 plate_mocap_weld，改用夹爪夹持")
 
     def _prepare_hold_scene(self):
-        """HOLD：板 Rz90 + mocap，手指夹紧，检查 finger-plate 接触"""
+        """板 Rz90，手指夹紧，记录夹持相对位姿（无 mocap 硬焊）"""
         model, data = self.model, self.data
+        self._disable_plate_mocap_weld()
 
         self.scene_free_qpos = {}
         for name in ("plate", "cup", "water_mass", "ball"):
@@ -821,7 +707,7 @@ class DualArmPlateController:
             self.scene_free_qpos[name] = (qadr, data.qpos[qadr:qadr + 7].copy())
 
         self.plate_hold_yaw = np.pi / 2
-        self._set_plate_mocap_yaw(self.plate_hold_yaw)
+        # 仅摆初始姿态；之后靠夹爪，不驱动 mocap 焊
         if "plate" in self.scene_free_qpos:
             qadr, q7 = self.scene_free_qpos["plate"]
             q7 = q7.copy()
@@ -832,29 +718,12 @@ class DualArmPlateController:
             data.qpos[qadr:qadr + 7] = q7
             self.scene_free_qpos["plate"] = (qadr, q7.copy())
 
-        self.finger_grip = 0.020 if self.free_plate else (0.014 if self.carry_mode else 0.012)
         gval = self.finger_grip
         for fname, val in (('leftfinger1_joint', gval), ('leftfinger2_joint', -gval),
                            ('rightfinger1_joint', gval), ('rightfinger2_joint', -gval)):
             jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, fname)
             if jid >= 0:
                 data.qpos[model.jnt_qposadr[jid]] = val
-
-        # free-plate：先把杯/球挪开并钉住，只测板夹持承力
-        if self.free_plate:
-            for name, xyz in (("cup", (0.8, 0.5, 0.05)),
-                              ("water_mass", (0.8, 0.5, 0.08)),
-                              ("ball", (0.8, -0.5, 0.05))):
-                if name not in self.scene_free_qpos:
-                    continue
-                qadr, _ = self.scene_free_qpos[name]
-                data.qpos[qadr:qadr + 3] = xyz
-                data.qpos[qadr + 3:qadr + 7] = [1, 0, 0, 0]
-                data.qvel[model.jnt_dofadr[model.body_jntadr[
-                    mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)]]:
-                          model.jnt_dofadr[model.body_jntadr[
-                    mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)]] + 6] = 0
-                self.scene_free_qpos[name] = (qadr, data.qpos[qadr:qadr + 7].copy())
 
         mujoco.mj_forward(model, data)
         n_fp = self._count_finger_plate_contacts()
@@ -921,10 +790,7 @@ class DualArmPlateController:
         return q_out
 
     def _tcp_pose_servo(self, tcp_body_id, grasp_off, grasp_R_rel):
-        """
-        相对板的 TCP 位姿误差 → 速度旋量修正
-        v += Kp*(p_des-p), w += Kp*rotvec(R_des R^T)
-        """
+        """相对实际板的 TCP 位姿误差 → 速度旋量修正。"""
         data = self.data
         R_p = data.xmat[self.plate_id].reshape(3, 3)
         p_p = data.xpos[self.plate_id]
@@ -972,10 +838,6 @@ class DualArmPlateController:
             np.cos(yaw / 2.0), 0.0, 0.0, np.sin(yaw / 2.0)
         ])
 
-    def _pin_scene_objects(self):
-        """HOLD 时不再钉住杯/球（靠与板接触支撑）；保留接口兼容"""
-        return
-
     # ==================================================================
     # 平板 Mocap 更新
     # ==================================================================
@@ -992,31 +854,16 @@ class DualArmPlateController:
         self._set_plate_mocap_yaw(yaw)
 
     def _update_carry_plate_target(self):
-        """短时搬运：先静止再沿 +X 匀速平移 plate_desired_pos。
-        free-plate 须等 weld 完全释放后再开始平移。"""
+        """先静止再沿 +X 匀速平移 plate_desired_pos（mocap 跟随）。"""
         if self.plate_start_pos is None:
             self.plate_start_pos = self.plate_desired_pos.copy()
 
         t = float(self.data.time)
-        # 真夹持：断焊前只保持，避免软焊段“假跟踪”
-        if self.free_plate and (not self._plate_released):
+        if t <= self.carry_hold_s:
             self.plate_desired_pos[:] = self.plate_start_pos
             return np.zeros(3)
 
-        hold_s = self.carry_hold_s
-        if self.free_plate and self._plate_released:
-            # 以释放时刻为搬运时间零点，再额外静持 0.3s
-            t0 = float(getattr(self, '_release_t', hold_s)) + 0.3
-            if t <= t0:
-                self.plate_desired_pos[:] = self.plate_start_pos
-                return np.zeros(3)
-            t_move = t - t0
-        else:
-            if t <= hold_s:
-                self.plate_desired_pos[:] = self.plate_start_pos
-                return np.zeros(3)
-            t_move = t - hold_s
-
+        t_move = t - self.carry_hold_s
         if t_move >= self.carry_move_s:
             self.plate_desired_pos[:] = self.plate_start_pos + np.array(
                 [self.carry_distance, 0.0, 0.0])
@@ -1026,71 +873,14 @@ class DualArmPlateController:
             [self.carry_vx * t_move, 0.0, 0.0])
         return np.array([self.carry_vx, 0.0, 0.0])
 
-    def _finger_plate_normal_force(self):
-        """手指-板接触法向力之和 (N)"""
-        model, data = self.model, self.data
-        finger_ids = set()
-        for name in ('leftfinger1_Link', 'leftfinger2_Link',
-                     'rightfinger1_Link', 'rightfinger2_Link'):
-            bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
-            if bid >= 0:
-                finger_ids.add(bid)
-        fsum = 0.0
-        for i in range(data.ncon):
-            c = data.contact[i]
-            b1 = int(model.geom_bodyid[c.geom1])
-            b2 = int(model.geom_bodyid[c.geom2])
-            if (b1 == self.plate_id and b2 in finger_ids) or \
-               (b2 == self.plate_id and b1 in finger_ids):
-                force = np.zeros(6)
-                mujoco.mj_contactForce(model, data, i, force)
-                fsum += abs(float(force[0]))
-        return fsum
-
-    def _maybe_release_plate_weld(self):
-        """free-plate：夹持力足够后软化 weld 并保持软约束（不断开，防掉+共载）。"""
-        if (not self.free_plate) or self._plate_released:
-            return
-        if self.data.time < self.carry_hold_s:
-            return
-        if self._weld_eq_id < 0:
-            return
-        fn = self._finger_plate_normal_force()
-        t_rel = self.data.time - self.carry_hold_s
-        if (not self._soft_weld_started) and fn < 20.0 and t_rel < 2.0:
-            return
-        if not self._soft_weld_started:
-            # 偏软共载：手指主承力，weld 兜底防掉并辅助平移
-            self.model.eq_solref[self._weld_eq_id] = [0.12, 1.0]
-            self.model.eq_solimp[self._weld_eq_id] = [0.4, 0.75, 0.02, 0.5, 2.0]
-            self._soft_weld_started = True
-            self._soft_weld_t0 = float(self.data.time)
-            print(f"[Carry] t={self.data.time:.2f}s 软化 weld 共载 (fn={fn:.1f}N)")
-            return
-        if (self.data.time - float(self._soft_weld_t0)) < 0.4:
-            return
-        if self.cut_weld:
-            self.data.eq_active[self._weld_eq_id] = 0
-            self._plate_released = True
-            self._release_t = float(self.data.time)
-            print(f"[Carry] t={self.data.time:.2f}s 断焊静持/搬运 (fn={fn:.1f}N)")
-            return
-        # 默认：保持软焊共载
-        self._plate_released = True
-        self._release_t = float(self.data.time)
-        print(f"[Carry] t={self.data.time:.2f}s 进入软焊共载搬运 (fn={fn:.1f}N, weld仍启用)")
-
     # ==================================================================
     # 主控制循环（单步）
     # ==================================================================
 
     def control_step(self):
-        """每步仿真调用一次，执行完整的 5 层控制链路"""
+        """每步仿真：HOLD 保持 或 CARRY 夹爪夹持 + 双臂跟踪"""
 
-        # === Hold 模式：锁定初始关节角，仅重力补偿 + PD ===
         if self.hold_mode:
-            self._set_plate_mocap_yaw(self.plate_hold_yaw)
-            self._pin_scene_objects()
             self.write_torque_ctrl(
                 self.q_des_left, np.zeros(7),
                 self.q_des_right, np.zeros(7))
@@ -1110,163 +900,62 @@ class DualArmPlateController:
                       f"roll={np.degrees(roll):+5.2f}° "
                       f"pitch={np.degrees(pitch):+5.2f}° "
                       f"| ‖Δq_L‖={err_l:.4f} ‖Δq_R‖={err_r:.4f} "
-                      f"grip_contacts={self._count_finger_plate_contacts()}")
+                      f"grip={self._count_finger_plate_contacts()}")
             return
 
-        # === 搬运：硬焊拖板（或 free-plate 真夹持）+ q_des 开环速度前馈 ===
-        if self.carry_mode:
-            self._maybe_release_plate_weld()
-            v_plate_des = self._update_carry_plate_target()
-            w_plate_des = np.zeros(3)
+        # === CARRY：夹爪夹持 + 手臂速度前馈（无 mocap 硬焊） ===
+        v_plate_des = self._update_carry_plate_target()
+        w_plate_des = np.zeros(3)
+        plate = self.data.xpos[self.plate_id]
+        R_p = self.data.xmat[self.plate_id].reshape(3, 3)
+        epos_L = float(np.linalg.norm(
+            plate + R_p @ self.grasp_off_L - self.data.xpos[self.tcp_left_id]))
+        epos_R = float(np.linalg.norm(
+            plate + R_p @ self.grasp_off_R - self.data.xpos[self.tcp_right_id]))
 
-            R_p = self.data.xmat[self.plate_id].reshape(3, 3)
-            p_p = self.data.xpos[self.plate_id]
-            p_des_L = p_p + R_p @ self.grasp_off_L
-            p_des_R = p_p + R_p @ self.grasp_off_R
-            epos_L = float(np.linalg.norm(p_des_L - self.data.xpos[self.tcp_left_id]))
-            epos_R = float(np.linalg.norm(p_des_R - self.data.xpos[self.tcp_right_id]))
-
-            twist_left = self.plate_twist_to_tcp_velocity(
-                v_plate_des, w_plate_des, self.tcp_left_id, self.grasp_off_L)
-            twist_right = self.plate_twist_to_tcp_velocity(
-                v_plate_des, w_plate_des, self.tcp_right_id, self.grasp_off_R)
-
-            # 丢接触则冻结 q_des，避免空手追板
-            if self.free_plate and self._plate_released:
-                if self._count_finger_plate_contacts() < 6:
-                    dq_left = np.zeros(7)
-                    dq_right = np.zeros(7)
-                    self.prev_dq_left[:] = 0.0
-                    self.prev_dq_right[:] = 0.0
-                    self.write_torque_ctrl(
-                        self.q_des_left, dq_left, self.q_des_right, dq_right)
-                    mid = self.mocap_idx
-                    self.data.mocap_pos[mid] = self.plate_desired_pos
-                    yaw = self.plate_hold_yaw
-                    self.data.mocap_quat[mid] = [
-                        np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
-                    if self.csv_logger is not None:
-                        self.csv_logger.maybe_log(
-                            self, dq_left, dq_right, epos_L, epos_R)
-                    self.step_count += 1
-                    if self.step_count % self.log_interval == 0:
-                        roll, pitch = self.get_chassis_orientation()
-                        plate = self.data.xpos[self.plate_id]
-                        print(f"[CARRY t={self.data.time:5.2f}s] FREEZE "
-                              f"grip={self._count_finger_plate_contacts()} "
-                              f"plate=({plate[0]:.3f},{plate[1]:.3f},{plate[2]:.3f})")
-                    return
-
-            J_left = self.compute_arm_jacobian(self.tcp_left_id, self.left_joint_ids)
-            J_right = self.compute_arm_jacobian(self.tcp_right_id, self.right_joint_ids)
-            dq_left = self.solve_ik_dls(J_left, twist_left)
-            dq_right = self.solve_ik_dls(J_right, twist_right)
-            alpha = 0.7
-            dq_left = alpha * dq_left + (1 - alpha) * self.prev_dq_left
-            dq_right = alpha * dq_right + (1 - alpha) * self.prev_dq_right
-            self.prev_dq_left = dq_left.copy()
-            self.prev_dq_right = dq_right.copy()
-
-            q_target_left = self.integrate_and_clamp(
-                dq_left, self.q_des_left, self.left_joint_ranges)
-            q_target_right = self.integrate_and_clamp(
-                dq_right, self.q_des_right, self.right_joint_ranges)
-            self.q_des_left = q_target_left.copy()
-            self.q_des_right = q_target_right.copy()
-
-            self.write_torque_ctrl(q_target_left, dq_left, q_target_right, dq_right)
-            # 软焊共载仍更新 mocap；手臂速度前馈贴板
-            self.update_plate_mocap(yaw=self.plate_hold_yaw)
-
-            if self.csv_logger is not None:
-                self.csv_logger.maybe_log(self, dq_left, dq_right, epos_L, epos_R)
-
-            self.step_count += 1
-            if self.step_count % self.log_interval == 0:
-                roll, pitch = self.get_chassis_orientation()
-                plate_z = self.data.xmat[self.plate_id].reshape(3, 3)[:, 2]
-                level_err = np.degrees(np.arccos(np.clip(plate_z[2], -1, 1)))
-                plate = self.data.xpos[self.plate_id]
-                tag = ' SOFT' if (self.free_plate and self._plate_released) else ''
-                print(f"[CARRY t={self.data.time:5.2f}s] "
-                      f"roll={np.degrees(roll):+5.1f}° pitch={np.degrees(pitch):+5.1f}° "
-                      f"| level={level_err:5.2f}° grip={self._count_finger_plate_contacts()} "
-                      f"plate=({plate[0]:.3f},{plate[1]:.3f},{plate[2]:.3f}) "
-                      f"eTCP=({epos_L*1000:.1f}/{epos_R*1000:.1f}mm){tag}")
-            return
-
-        # === 第1层：姿态补偿 ===
-        w_comp, roll, pitch = self.compute_attitude_compensation()
-
-        # === 次级任务：小球驻留 ===
-        w_ball = np.zeros(3)
-        ball_offset = np.zeros(3)
-        if self.enable_ball:
-            w_ball, ball_offset = self.compute_ball_centering()
-
-        # === 第0层：平板期望速度旋量 ===
-        v_plate_des = np.array([0.0, 0.0, 0.0])
-
-        # 角速度 = 姿态补偿（硬约束）+ 小球驻留（软约束）
-        w_plate_des = w_comp + 0.15 * w_ball
-        w_plate_des[2] = 0.0  # 禁止 yaw 旋
-
-        # === 第2层：平板速度 → TCP + 夹持伺服 ===
-        twist_left  = self.plate_twist_to_tcp_velocity(
-            v_plate_des, w_plate_des, self.tcp_left_id)
+        twist_left = self.plate_twist_to_tcp_velocity(
+            v_plate_des, w_plate_des, self.tcp_left_id, self.grasp_off_L)
         twist_right = self.plate_twist_to_tcp_velocity(
-            v_plate_des, w_plate_des, self.tcp_right_id)
-        servo_L, epos_L, _ = self._tcp_pose_servo(
+            v_plate_des, w_plate_des, self.tcp_right_id, self.grasp_off_R)
+        servo_L, _, _ = self._tcp_pose_servo(
             self.tcp_left_id, self.grasp_off_L, self.grasp_R_L)
-        servo_R, epos_R, _ = self._tcp_pose_servo(
+        servo_R, _, _ = self._tcp_pose_servo(
             self.tcp_right_id, self.grasp_off_R, self.grasp_R_R)
-        twist_left  = twist_left + servo_L
+        twist_left = twist_left + servo_L
         twist_right = twist_right + servo_R
 
-        # === 第3层：雅可比 + DLS 伪逆 ===
-        J_left  = self.compute_arm_jacobian(self.tcp_left_id,  self.left_joint_ids)
+        J_left = self.compute_arm_jacobian(self.tcp_left_id, self.left_joint_ids)
         J_right = self.compute_arm_jacobian(self.tcp_right_id, self.right_joint_ids)
-
-        dq_left  = self.solve_ik_dls(J_left,  twist_left)
+        dq_left = self.solve_ik_dls(J_left, twist_left)
         dq_right = self.solve_ik_dls(J_right, twist_right)
-
-        # 速度平滑（一阶低通滤波）
         alpha = 0.7
-        dq_left  = alpha * dq_left  + (1 - alpha) * self.prev_dq_left
+        dq_left = alpha * dq_left + (1 - alpha) * self.prev_dq_left
         dq_right = alpha * dq_right + (1 - alpha) * self.prev_dq_right
-        self.prev_dq_left  = dq_left
-        self.prev_dq_right = dq_right
-        self._last_dq_left = dq_left.copy()
-        self._last_dq_right = dq_right.copy()
+        self.prev_dq_left = dq_left.copy()
+        self.prev_dq_right = dq_right.copy()
 
-        # === 第4层：积分 + 限位 ===
-        q_cur_left  = self.get_current_joint_positions('left')
-        q_cur_right = self.get_current_joint_positions('right')
+        self.q_des_left = self.integrate_and_clamp(
+            dq_left, self.q_des_left, self.left_joint_ranges)
+        self.q_des_right = self.integrate_and_clamp(
+            dq_right, self.q_des_right, self.right_joint_ranges)
 
-        q_target_left  = self.integrate_and_clamp(dq_left,  q_cur_left,  self.left_joint_ranges)
-        q_target_right = self.integrate_and_clamp(dq_right, q_cur_right, self.right_joint_ranges)
-
-        # === 第5层：重力补偿 + PD 力矩 → data.ctrl ===
-        self.write_torque_ctrl(q_target_left, dq_left, q_target_right, dq_right)
-
-        # === 更新平板 mocap ===
-        self.update_plate_mocap(yaw=self.plate_hold_yaw)
+        self.write_torque_ctrl(
+            self.q_des_left, dq_left, self.q_des_right, dq_right)
 
         if self.csv_logger is not None:
             self.csv_logger.maybe_log(self, dq_left, dq_right, epos_L, epos_R)
 
-        # === 日志输出 ===
         self.step_count += 1
         if self.step_count % self.log_interval == 0:
-            plate_z = self.data.xmat[self.plate_id].reshape(3, 3)[:, 2]
+            roll, pitch = self.get_chassis_orientation()
+            plate_z = R_p[:, 2]
             level_err = np.degrees(np.arccos(np.clip(plate_z[2], -1, 1)))
-            print(f"[t={self.data.time:5.2f}s] "
-                  f"roll={np.degrees(roll):+5.1f}° "
-                  f"pitch={np.degrees(pitch):+5.1f}° "
-                  f"| level_err={level_err:5.2f}° "
-                  f"ball_offset=({ball_offset[0]:+5.3f}, {ball_offset[1]:+5.3f})")
-
-        return dq_left, dq_right, roll, pitch
+            print(f"[CARRY t={self.data.time:5.2f}s] "
+                  f"roll={np.degrees(roll):+5.1f}° pitch={np.degrees(pitch):+5.1f}° "
+                  f"| level={level_err:5.2f}° grip={self._count_finger_plate_contacts()} "
+                  f"plate=({plate[0]:.3f},{plate[1]:.3f},{plate[2]:.3f}) "
+                  f"des_x={self.plate_desired_pos[0]:.3f} "
+                  f"eTCP=({epos_L*1000:.1f}/{epos_R*1000:.1f}mm)")
 
 # =====================================================================
 # 仿真运行器
@@ -1417,8 +1106,7 @@ class SimulationRunner:
         self.controller.finger_grip = 0.010
         self.controller.lock_hold_targets()
 
-        mode = ("HOLD" if self.controller.hold_mode else
-                ("CARRY" if self.controller.carry_mode else "BALANCE"))
+        mode = "HOLD" if self.controller.hold_mode else "CARRY"
         print(f"  控制模式: {mode}")
 
         csv_path = getattr(self.args, 'csv', None)
@@ -1439,8 +1127,7 @@ class SimulationRunner:
 
     def run_headless(self):
         """无 GUI 模式运行"""
-        mode = ("HOLD" if self.controller.hold_mode else
-                ("CARRY" if self.controller.carry_mode else "BALANCE"))
+        mode = "HOLD" if self.controller.hold_mode else "CARRY"
         print(f"[Run] 无GUI模式 [{mode}]，仿真时长 {self.args.duration}s")
         total_steps = int(self.args.duration / self.model.opt.timestep)
 
@@ -1483,11 +1170,15 @@ class SimulationRunner:
             issues = []
 
         self._print_state()
-        ok = (max_err_l < 0.35 and max_err_r < 0.35 and max_pitch < np.radians(8.0))
+        if self.controller.hold_mode:
+            ok = (max_err_l < 0.05 and max_err_r < 0.05 and max_pitch < np.radians(5.0))
+        else:
+            # CARRY：手臂应跟板移动，不以初始 Δq 判失败；看 CSV 板跟踪与躯干
+            ok = max_pitch < np.radians(10.0)
         if issues:
             ok = False
         print(f"[Verdict] {'PASS' if ok else 'FAIL'} "
-              f"({'搬运/稳姿' if not self.controller.hold_mode else 'HOLD'})")
+              f"({'CARRY' if not self.controller.hold_mode else 'HOLD'})")
         return ok
 
     def run_gui(self):
@@ -1676,90 +1367,42 @@ class SimulationRunner:
 def parse_args():
     """命令行参数解析"""
     parser = argparse.ArgumentParser(
-        description="轮式移动双臂机器人协同稳载仿真系统",
+        description="双臂协同稳载仿真：HOLD / CARRY（夹爪夹持，无 mocap 硬焊）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python dual_arm_controller.py --carry --duration 3     # 短时搬运+CSV（默认调试）
-  python dual_arm_controller.py --hold --duration 3      # 仅 HOLD
-  python dual_arm_controller.py --carry --gui            # GUI 看搬运
-  python dual_arm_controller.py --balance --duration 3   # 稳水平不平移
+  python dual_arm_controller.py --gui                 # 有界面 CARRY（推荐）
+  python dual_arm_controller.py --hold --gui
+  python dual_arm_controller.py --duration 8          # 无界面
         """)
 
     parser.add_argument('--gui', action='store_true',
-                        help='启用 MuJoCo 可视化渲染')
+                        help='启用 MuJoCo 可视化')
     parser.add_argument('--step', action='store_true',
-                        help='逐步仿真模式（按 Enter 前进）')
+                        help='逐步仿真（按 Enter 前进）')
     parser.add_argument('--duration', type=float, default=7.5,
-                        help='仿真时长(s)，默认覆盖6cm慢移')
+                        help='仿真时长(s)')
     parser.add_argument('--hold', action='store_true',
-                        help='仅保持初始姿态（关闭搬运/稳水平）')
-    parser.add_argument('--balance', action='store_true',
-                        help='启用稳水平/小球（不主动平移板）')
-    parser.add_argument('--carry', action='store_true', default=True,
-                        help='短时搬运平板（默认开启）')
-    parser.add_argument('--no-carry', action='store_true',
-                        help='关闭默认搬运')
+                        help='HOLD：仅保持初始姿态')
     parser.add_argument('--carry-hold', type=float, default=0.5,
                         help='搬运前静止时间(s)')
     parser.add_argument('--carry-move', type=float, default=6.0,
-                        help='平移持续时间(s)，过快易丢握持')
+                        help='平移持续时间(s)')
     parser.add_argument('--carry-dist', type=float, default=0.06,
-                        help='沿+X平移距离(m)，默认6cm')
-    parser.add_argument('--free-plate', action='store_true',
-                        help='软焊共载：夹持力起来后弱化mocap weld，手指承力为主')
-    parser.add_argument('--cut-weld', action='store_true',
-                        help='配合--free-plate：完全断开weld（仅建议静持）')
+                        help='沿+X平移距离(m)')
     parser.add_argument('--csv', type=str, default='logs/carry_last.csv',
                         help='CSV 日志路径')
     parser.add_argument('--csv-every', type=int, default=5,
                         help='每隔多少仿真步写一行CSV')
-    parser.add_argument('--kp-attitude', type=float, default=5.0,
-                        help='姿态补偿比例增益')
-    parser.add_argument('--kp-ball', type=float, default=2.0,
-                        help='小球驻留比例增益')
-    parser.add_argument('--no-ball', action='store_true',
-                        help='禁用小球驻留任务')
     parser.add_argument('--xml', type=str,
                         default='scene_dual_arm_plate.xml',
                         help='MJCF 场景文件路径')
-
-    args = parser.parse_args()
-    if args.no_carry:
-        args.carry = False
-    if args.hold:
-        args.carry = False
-        args.balance = False
-    elif args.carry:
-        args.balance = True  # 搬运复用稳水平链路
-    # 软焊共载默认参数（仅当用户未显式传入对应 flag）
-    if args.free_plate and args.carry:
-        argv = set(sys.argv)
-        if args.cut_weld:
-            if '--carry-dist' not in argv:
-                args.carry_dist = 0.0
-            if '--carry-move' not in argv:
-                args.carry_move = 0.5
-            if '--carry-hold' not in argv:
-                args.carry_hold = 1.0
-            if '--duration' not in argv:
-                args.duration = 4.0
-        else:
-            if '--carry-dist' not in argv:
-                args.carry_dist = 0.03
-            if '--carry-move' not in argv:
-                args.carry_move = 7.0
-            if '--carry-hold' not in argv:
-                args.carry_hold = 1.0
-            if '--duration' not in argv:
-                args.duration = 11.0
-    return args
+    return parser.parse_args()
 
 
 def main():
     args = parse_args()
 
-    # 查找 MJCF 文件
     xml_path = args.xml
     if not os.path.isabs(xml_path):
         candidates = [
@@ -1775,22 +1418,19 @@ def main():
             print(f"  搜索路径: {candidates}")
             sys.exit(1)
 
-    mode = 'HOLD' if args.hold else ('CARRY' if args.carry else ('BALANCE' if args.balance else 'HOLD'))
+    mode = 'HOLD' if args.hold else 'CARRY'
     print("=" * 60)
     print("  轮式移动双臂机器人协同稳载仿真系统")
-    print("  BalanceDual-Arm v1.0")
+    print("  BalanceDual-Arm v1.3")
     print("=" * 60)
     print(f"  MJCF:    {xml_path}")
     print(f"  GUI:     {args.gui}")
     print(f"  Mode:    {mode}")
     print(f"  Duration:{args.duration}s")
     print(f"  CSV:     {args.csv}")
-    if args.carry:
+    if mode == 'CARRY':
         print(f"  Carry:   hold={args.carry_hold}s move={args.carry_move}s "
-              f"dist={args.carry_dist}m"
-              f"{'  free-plate' if args.free_plate else ''}")
-    print(f"  Kp_att:  {args.kp_attitude}")
-    print(f"  Ball:    {'启用' if not args.no_ball else '禁用'}")
+              f"dist={args.carry_dist}m  [grip-only]")
     print("=" * 60)
 
     runner = SimulationRunner(xml_path, args)

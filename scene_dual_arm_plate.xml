@@ -10,7 +10,7 @@
 
   场景物体（全部原生几何体）：
     - 地面（plane）
-    - 平板 mocap 驱动体 + 平板物理浮体（weld 约束连接）
+    - 平板物理浮体（夹爪摩擦夹持，无 mocap 硬焊）
     - 水杯自由刚体
     - 水体质量块（模拟水面重心偏移）
     - 自由滚动小球
@@ -141,7 +141,6 @@
     <body name="plate" pos="0.35 0 0.98">
       <freejoint name="plate_freejoint"/>
       <!-- 平板主体：半尺寸 0.21×0.12，旋转90°后长边沿Y(±0.21)，短边沿X -->
-      <!-- mass 显式给定：默认识别密度约1.6kg，夹持摩擦托举需足够法向力 -->
       <geom type="box" size="0.21 0.12 0.008" mass="0.80"
             rgba="0.82 0.55 0.15 1" name="plate_geom"
             friction="5 0.1 0.01" condim="4"
@@ -440,10 +439,7 @@
   <!-- 等式约束 -->
   <!-- ================================================================ -->
   <equality>
-    <!-- 平板 mocap 焊接约束：驱动平板平滑运动 -->
-    <weld name="plate_mocap_weld"
-          body1="plate_mocap" body2="plate"
-          solref="0.005 0.8" solimp="0.9 0.99 0.0001"/>
+    <!-- 已取消 plate_mocap_weld：平板靠夹爪摩擦夹持，非 mocap 硬焊 -->
 
     <!-- 手指镜像联动约束 -->
     <joint joint1="rightfinger1_joint" joint2="rightfinger2_joint" polycoef="0 -1.0 0.0 0"/>
