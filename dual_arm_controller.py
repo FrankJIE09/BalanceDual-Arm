@@ -18,9 +18,10 @@
 运行：
   python dual_arm_controller.py                 # 读 config.yaml
   python dual_arm_controller.py --config my.yaml
+  # sim.keyboard=true 时 GUI 下可用 qawsedrftgyh 遥操期望板 6D
 
-版本：v1.2
-日期：2026-08-08
+版本：v1.3
+日期：2026-08-09
 """
 
 import mujoco
@@ -37,6 +38,14 @@ try:
     import yaml
 except ImportError as e:
     raise SystemExit("需要 PyYAML：pip install pyyaml") from e
+
+try:
+    from pynput import keyboard as pynput_keyboard
+except ImportError as e:
+    pynput_keyboard = None
+    _PYNPUT_IMPORT_ERROR = e
+else:
+    _PYNPUT_IMPORT_ERROR = None
 
 # =====================================================================
 # 常量定义
@@ -57,6 +66,90 @@ RIGHT_ARM_ACT_IDS = list(range(ACT_RIGHT_ARM_START, ACT_RIGHT_ARM_START + 7))  #
 # 关节名称列表
 LEFT_ARM_JOINT_NAMES = [f"left_arm_joint_{i}" for i in range(1, 8)]
 RIGHT_ARM_JOINT_NAMES = [f"right_arm_joint_{i}" for i in range(1, 8)]
+
+
+# =====================================================================
+# 键盘遥操（pynput）：期望板体 6 自由度
+#   q/a ±X   w/s ±Y   e/d ±Z   r/f ±roll   t/g ±pitch   y/h ±yaw
+# =====================================================================
+
+class PlateKeyboardTeleop:
+    """按住键产生板体系线速度 / 角速度指令。"""
+
+    # char -> (vx, vy, vz, wx, wy, wz) 单位方向
+    _DIR = {
+        'q': ( 1, 0, 0, 0, 0, 0),
+        'a': (-1, 0, 0, 0, 0, 0),
+        'w': ( 0, 1, 0, 0, 0, 0),
+        's': ( 0,-1, 0, 0, 0, 0),
+        'e': ( 0, 0, 1, 0, 0, 0),
+        'd': ( 0, 0,-1, 0, 0, 0),
+        'r': ( 0, 0, 0, 1, 0, 0),
+        'f': ( 0, 0, 0,-1, 0, 0),
+        't': ( 0, 0, 0, 0, 1, 0),
+        'g': ( 0, 0, 0, 0,-1, 0),
+        'y': ( 0, 0, 0, 0, 0, 1),
+        'h': ( 0, 0, 0, 0, 0,-1),
+    }
+
+    def __init__(self, v_lin=0.08, w_ang=0.4):
+        if pynput_keyboard is None:
+            raise RuntimeError(
+                f"键盘模式需要 pynput：pip install pynput "
+                f"(import error: {_PYNPUT_IMPORT_ERROR})")
+        self.v_lin = float(v_lin)
+        self.w_ang = float(w_ang)
+        self._pressed = set()
+        self._listener = pynput_keyboard.Listener(
+            on_press=self._on_press, on_release=self._on_release)
+        self._listener.daemon = True
+        self._listener.start()
+
+    @staticmethod
+    def help_text():
+        return (
+            "键盘遥操（期望板体坐标）：\n"
+            "  q/a ±X   w/s ±Y   e/d ±Z\n"
+            "  r/f ±roll   t/g ±pitch   y/h ±yaw\n"
+            "  （按住持续运动；关 GUI 窗口退出）"
+        )
+
+    def _key_char(self, key):
+        try:
+            ch = key.char
+        except AttributeError:
+            return None
+        if ch is None:
+            return None
+        return ch.lower()
+
+    def _on_press(self, key):
+        ch = self._key_char(key)
+        if ch in self._DIR:
+            self._pressed.add(ch)
+
+    def _on_release(self, key):
+        ch = self._key_char(key)
+        if ch in self._DIR:
+            self._pressed.discard(ch)
+
+    def body_twist(self):
+        """返回板体系 (v[3], w[3])，m/s 与 rad/s。"""
+        v = np.zeros(3)
+        w = np.zeros(3)
+        for ch in list(self._pressed):
+            d = self._DIR.get(ch)
+            if d is None:
+                continue
+            v += self.v_lin * np.array(d[:3], dtype=float)
+            w += self.w_ang * np.array(d[3:], dtype=float)
+        return v, w
+
+    def stop(self):
+        try:
+            self._listener.stop()
+        except Exception:
+            pass
 
 
 # =====================================================================
@@ -285,6 +378,17 @@ class DualArmPlateController:
         self.init_quat = self._rpy_to_quat(self.init_rpy)
         self.target_quat = self._rpy_to_quat(self.target_rpy)
         self.plate_desired_quat = self.init_quat.copy()
+
+        # 键盘遥操（GUI + sim.keyboard）；偏移叠在轨迹目标上
+        self.keyboard_enabled = bool(getattr(sim, 'keyboard', False))
+        teleop_cfg = getattr(carry, 'teleop', None)
+        self._teleop_v_lin = float(getattr(teleop_cfg, 'v_lin', 0.08)
+                                   if teleop_cfg is not None else 0.08)
+        self._teleop_w_ang = float(getattr(teleop_cfg, 'w_ang', 0.4)
+                                   if teleop_cfg is not None else 0.4)
+        self.teleop = None
+        self._kb_pos_off = np.zeros(3)
+        self._kb_R_off = np.eye(3)
 
         # 力矩 PD：τ = g(q) + Kp·e + Kd·ė
         self.kp_arm = np.asarray(ctrl.kp_arm, dtype=float)
@@ -519,6 +623,44 @@ class DualArmPlateController:
         n = float(np.linalg.norm(q))
         return q / n if n > 1e-12 else q0.copy()
 
+    @staticmethod
+    def _skew(v):
+        x, y, z = [float(a) for a in v]
+        return np.array([
+            [0.0, -z, y],
+            [z, 0.0, -x],
+            [-y, x, 0.0],
+        ])
+
+    @staticmethod
+    def _exp_so3(w_dt):
+        """旋转向量 → SO(3)（Rodrigues）。"""
+        w_dt = np.asarray(w_dt, dtype=float).reshape(3)
+        th = float(np.linalg.norm(w_dt))
+        if th < 1e-12:
+            return np.eye(3)
+        k = w_dt / th
+        K = DualArmPlateController._skew(k)
+        return (np.eye(3) + np.sin(th) * K + (1.0 - np.cos(th)) * (K @ K))
+
+    def enable_keyboard_teleop(self):
+        """启动 pynput 监听（仅 GUI 调用）。"""
+        if not self.keyboard_enabled:
+            return False
+        if self.teleop is not None:
+            return True
+        self.teleop = PlateKeyboardTeleop(
+            v_lin=self._teleop_v_lin, w_ang=self._teleop_w_ang)
+        print(PlateKeyboardTeleop.help_text())
+        print(f"  teleop v_lin={self._teleop_v_lin:.3f}m/s  "
+              f"w_ang={self._teleop_w_ang:.3f}rad/s")
+        return True
+
+    def disable_keyboard_teleop(self):
+        if self.teleop is not None:
+            self.teleop.stop()
+            self.teleop = None
+
     def _init_kinematics(self):
         """初始化运动学链：获取关节/刚体/执行器 ID"""
         model = self.model
@@ -567,7 +709,7 @@ class DualArmPlateController:
         print(f"[Init] 右臂关节 ID: {self.right_joint_ids}")
         print(f"[Init] 左臂执行器 ID: {self.left_act_ids}")
         print(f"[Init] 右臂执行器 ID: {self.right_act_ids}")
-        print(f"[Init] 执行器模式: motor 力矩控制 (τ = g(q) + PD)")
+        print(f"[Init] 执行器模式: motor 力矩控制 (τ = g(q) + PD；关节 armature=折算惯量)")
 
     # ==================================================================
     # 第0层：读取状态
@@ -1233,18 +1375,38 @@ class DualArmPlateController:
         settle：保持 init；move：
           p = p0 + α · (R_target @ delta_body)
           q = slerp(q_init, q_target, α)
+        若启用键盘遥操：在轨迹目标上叠加板体系 6D 增量。
         """
         if self.plate_start_pos is None:
             self.plate_start_pos = self.plate_desired_pos.copy()
             self._plate_des_prev = self.plate_desired_pos.copy()
             self.plate_desired_quat = self.init_quat.copy()
+            self._kb_pos_off[:] = 0.0
+            self._kb_R_off[:] = np.eye(3)
 
         alpha = self._carry_alpha()
         R_end = self._quat_to_R(self.target_quat)
         delta_w = R_end @ self.target_delta_body
-        self.plate_desired_pos[:] = self.plate_start_pos + alpha * delta_w
-        self.plate_desired_quat[:] = self._quat_slerp(
-            self.init_quat, self.target_quat, alpha)
+        traj_p = self.plate_start_pos + alpha * delta_w
+        traj_q = self._quat_slerp(self.init_quat, self.target_quat, alpha)
+        R_traj = self._quat_to_R(traj_q)
+
+        if self.teleop is not None:
+            v_b, w_b = self.teleop.body_twist()
+            R_des = R_traj @ self._kb_R_off
+            self._kb_pos_off += R_des @ v_b * self.dt
+            dR = self._exp_so3(w_b * self.dt)
+            self._kb_R_off = self._kb_R_off @ dR
+            # 数值正交化
+            u, _, vh = np.linalg.svd(self._kb_R_off)
+            self._kb_R_off = u @ vh
+            if np.linalg.det(self._kb_R_off) < 0:
+                u[:, -1] *= -1.0
+                self._kb_R_off = u @ vh
+
+        self.plate_desired_pos[:] = traj_p + self._kb_pos_off
+        self.plate_desired_quat[:] = self._R_to_quat_wxyz(
+            R_traj @ self._kb_R_off)
 
     def _plate_twist_des_world(self):
         """
@@ -1705,24 +1867,28 @@ class SimulationRunner:
 
     def run_gui(self):
         """带 GUI 可视化模式运行"""
-        print(f"[Run] GUI可视化模式，按 ESC 退出")
+        print(f"[Run] GUI可视化模式，按 ESC / 关窗口退出")
+        self.controller.enable_keyboard_teleop()
 
-        with mujoco.viewer.launch_passive(self.model, self.data) as viewer:
-            # 设置相机视角
-            viewer.cam.azimuth = 135
-            viewer.cam.elevation = -25
-            viewer.cam.distance = 3.0
-            viewer.cam.lookat[:] = [0.3, 0.0, 0.7]
+        try:
+            with mujoco.viewer.launch_passive(self.model, self.data) as viewer:
+                # 设置相机视角
+                viewer.cam.azimuth = 135
+                viewer.cam.elevation = -25
+                viewer.cam.distance = 3.0
+                viewer.cam.lookat[:] = [0.3, 0.0, 0.7]
 
-            while viewer.is_running():
-                step_start = time.time()
-                self.step()
-                viewer.sync()
+                while viewer.is_running():
+                    step_start = time.time()
+                    self.step()
+                    viewer.sync()
 
-                # 帧率控制
-                elapsed = time.time() - step_start
-                if elapsed < self.model.opt.timestep:
-                    time.sleep(self.model.opt.timestep - elapsed)
+                    # 帧率控制
+                    elapsed = time.time() - step_start
+                    if elapsed < self.model.opt.timestep:
+                        time.sleep(self.model.opt.timestep - elapsed)
+        finally:
+            self.controller.disable_keyboard_teleop()
 
     def run_step_mode(self):
         """逐步调试模式（按 Enter 前进一帧）"""
@@ -1951,11 +2117,12 @@ def main():
     mode = str(cfg.sim.mode).strip().upper()
     print("=" * 60)
     print("  轮式移动双臂机器人协同稳载仿真系统")
-    print("  BalanceDual-Arm v1.2")
+    print("  BalanceDual-Arm v1.3")
     print("=" * 60)
     print(f"  Config:  {cfg._config_path}")
     print(f"  MJCF:    {xml_path}")
     print(f"  GUI:     {bool(cfg.sim.gui)}")
+    print(f"  Keyboard:{bool(getattr(cfg.sim, 'keyboard', False))}")
     print(f"  Mode:    {mode}")
     print(f"  Duration:{float(cfg.sim.duration)}s")
     print(f"  CSV:     {cfg.sim.csv}")

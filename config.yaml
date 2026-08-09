@@ -9,6 +9,8 @@ sim:
   duration: 7.5
   # hold | carry
   mode: carry
+  # GUI 下 pynput 键盘遥操期望板 6D（qawsedrftgyh）
+  keyboard: true
   csv: logs/carry_last.csv
   csv_every: 5
   # 控制日志打印间隔（秒）
@@ -19,21 +21,25 @@ carry:
   # 目标在初始位姿停留时间 (s)
   settle_s: 0.5
   # 从初始插值到期望终点的时间 (s)
-  move_s: 6.0
+  move_s: 1.0
   # 场景摆放：板的初始姿态（世界系 RPY）
   init_pose:
     rpy: [0.0, 0.0, 1.5707963267948966]
   # 控制期望终点
   target_pose:
     # 相对初始、在期望板体坐标系下的平移 (m)
-    delta_body: [0.0, 0.0, 0.0]
+    delta_body: [0.0, 0.0, 0.1]
     # 期望姿态（世界系 RPY）；可与 init_pose.rpy 不同
-    rpy: [0.0, 0.0, 1.0707963267948966]
+    rpy: [0.0, 0.0, 1.5707963267948966]
+  # 键盘遥操速率（板体系）
+  teleop:
+    v_lin: 0.1   # m/s
+    w_ang: 0.4    # rad/s
 
 control:
   dls_lambda: 0.01
 
-  # 臂关节 PD/I（7 轴）
+  # 臂关节 PD/I（7 轴）：力矩模式刚度来源 τ=g(q)+Kp·e+Kd·ė（非 position 执行器）
   kp_arm: [80.0, 80.0, 60.0, 60.0, 30.0, 30.0, 25.0]
   kd_arm: [10.0, 10.0,  8.0,  8.0,  3.0,  3.0,  2.5]
   ki_arm: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]

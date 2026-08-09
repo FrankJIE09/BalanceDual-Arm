@@ -1,0 +1,7 @@
+# BalanceDual-Arm — Python 3.8+
+# MuJoCo 仿真与双臂协同稳载控制
+
+mujoco>=3.0.0,<4
+numpy>=1.20
+PyYAML>=5.4
+pynput>=1.7
