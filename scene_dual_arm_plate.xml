@@ -336,6 +336,9 @@
                           <joint name="left_arm_joint_7" axis="0 0 1" range="-1.5708 1.5708" actuatorfrcrange="-18 18" damping="0.1"/>
                           <geom type="mesh" rgba="0 1 0 1" mesh="Joint7_L"/>
                           <geom pos="0 -0.095 0" quat="0.000563312 0.000562864 0.707388 -0.706825" type="mesh" rgba="0.866667 0.909804 1 1" mesh="left_flange_link"/>
+                          <!-- TCP：法兰盘中心（与 left_flange_link 同位姿） -->
+                          <site name="tcp_L" pos="0 -0.095 0" quat="0.000563312 0.000562864 0.707388 -0.706825"
+                                size="0.012" rgba="1 0 1 0.9"/>
                           <geom pos="-0.00884695 -0.128766 -0.0961031" quat="0.765788 0.643092 -0.000609818 0.000512112" type="mesh" rgba="1 1 1 1" mesh="cam_install_leftarm"/>
                           <geom pos="1.26827e-08 -0.105 -7.96326e-06" quat="0.000563312 0.000562864 0.707388 -0.706825" type="mesh" rgba="0.866667 0.909804 1 1" mesh="Lbase_link"/>
                           <body name="leftfinger1_Link" pos="0.0265722 -0.225489 -0.0132756" quat="0.000563312 0.000562864 0.707388 -0.706825">
@@ -392,6 +395,9 @@
                           <joint name="right_arm_joint_7" axis="0 0 1" range="-1.5708 1.5708" actuatorfrcrange="-18 18" damping="0.1"/>
                           <geom type="mesh" rgba="0 1 0 1" mesh="Joint7_R"/>
                           <geom pos="0 -0.095 0" quat="0.000563312 0.000562864 0.707388 -0.706825" type="mesh" rgba="0.866667 0.909804 1 1" mesh="right_flange_link"/>
+                          <!-- TCP：法兰盘中心（与 right_flange_link 同位姿） -->
+                          <site name="tcp_R" pos="0 -0.095 0" quat="0.000563312 0.000562864 0.707388 -0.706825"
+                                size="0.012" rgba="1 0 1 0.9"/>
                           <geom pos="-0.00884695 -0.128766 -0.0961031" quat="0.765788 0.643092 -0.000609818 0.000512112" type="mesh" rgba="1 1 1 1" mesh="cam_install_rightarm"/>
                           <geom pos="1.26827e-08 -0.105 -7.96326e-06" quat="0.000563312 0.000562864 0.707388 -0.706825" type="mesh" rgba="0.866667 0.909804 1 1" mesh="Rbase_link"/>
                           <body name="rightfinger1_Link" pos="0.0265722 -0.225489 -0.0132756" quat="0.000563312 0.000562864 0.707388 -0.706825">

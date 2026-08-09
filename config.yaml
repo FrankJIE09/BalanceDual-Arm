@@ -1,0 +1,64 @@
+# BalanceDual-Arm 仿真 / 控制配置
+# 运行: python dual_arm_controller.py
+#       python dual_arm_controller.py --config config.yaml
+
+sim:
+  xml: scene_dual_arm_plate.xml
+  gui: true
+  step: false
+  duration: 7.5
+  # hold | carry
+  mode: carry
+  csv: logs/carry_last.csv
+  csv_every: 5
+  # 控制日志打印间隔（秒）
+  log_interval_s: 0.5
+
+# CARRY：初始位姿 / 期望位姿分开设置（速度由位姿误差反馈生成）
+carry:
+  # 目标在初始位姿停留时间 (s)
+  settle_s: 0.5
+  # 从初始插值到期望终点的时间 (s)
+  move_s: 6.0
+  # 场景摆放：板的初始姿态（世界系 RPY）
+  init_pose:
+    rpy: [0.0, 0.0, 1.5707963267948966]
+  # 控制期望终点
+  target_pose:
+    # 相对初始、在期望板体坐标系下的平移 (m)
+    delta_body: [0.0, 0.0, 0.0]
+    # 期望姿态（世界系 RPY）；可与 init_pose.rpy 不同
+    rpy: [0.0, 0.0, 1.0707963267948966]
+
+control:
+  dls_lambda: 0.01
+
+  # 臂关节 PD/I（7 轴）
+  kp_arm: [80.0, 80.0, 60.0, 60.0, 30.0, 30.0, 25.0]
+  kd_arm: [10.0, 10.0,  8.0,  8.0,  3.0,  3.0,  2.5]
+  ki_arm: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  i_err_limit: 0.2
+
+  # 腿 / 躯干 / 头
+  kp_leg: 400.0
+  kd_leg: 40.0
+  kp_trunk: 600.0
+  kd_trunk: 60.0
+  kp_head: 40.0
+  kd_head: 4.0
+
+  # 手指
+  kp_finger: 400.0
+  kd_finger: 10.0
+  # 持续夹紧力偏置 (N)，正=合拢
+  finger_close_bias: 50.0
+
+  # 法兰 TCP 相对期望板的位姿伺服
+  kp_tcp_pos: 8.0
+  kp_tcp_rot: 5.0
+
+  # 板 target_pose 误差 → 板体系速度
+  kp_plate_pos: 2.0
+  kp_plate_rot: 2.0
+  v_plate_body_limit: 0.3   # m/s
+  w_plate_body_limit: 1.0   # rad/s
